@@ -27,23 +27,35 @@ class Game:
 
     def reset(self):
         """Resets the game to the initial state."""
-        # Shuffle and deal new hands to each player
+
+        self.reset_round()
+
+        # Reset score
+        self.game_state["score"] = [0, 0]
+
+    def reset_round(self):
+        """Resets all round-specific variables and states."""
+
+        # Reset cards in hands
         deck = ['9S', 'TS', 'JS', 'QS', 'KS', 'AS',
                 '9H', 'TH', 'JH', 'QH', 'KH', 'AH',
                 '9D', 'TD', 'JD', 'QD', 'KD', 'AD',
                 '9C', 'TC', 'JC', 'QC', 'KC', 'AC']
         random.shuffle(deck)
         for i, player in enumerate(self.players):
-            self.game_state["hands"][player.player_id] = deck[i * 6:(i + 1) * 6]  # Deal 6 cards to each player
+            player.hand = deck[i * 6: (i + 1) * 6]
 
-        # Reset score
-        self.game_state["score"] = [0, 0]
-
-        # Reset current trick, played cards, all bids, winning bid, and lead players
+        # Reset current trick
         self.game_state["current_trick"] = []
+
+        # Reset played cards
         self.game_state["played_cards"] = [[] for _ in range(6)]
+
+        # Reset bids
         self.game_state["all_bids"] = []
         self.game_state["winning_bid"] = (-1, -1, None)
+
+        # Reset lead players for tricks
         self.game_state["lead_players"] = [None] * 6
 
     def step(self, player, action):
@@ -52,7 +64,7 @@ class Game:
         pass
 
     def bid_round(self):
-        """Conducts the bidding round."""
+        """Conducts the bidding round of the game."""
         for player in self.players:
             # Get bid from player
             bid, trump_suit = player.make_bid(self.game_state)
@@ -70,7 +82,8 @@ class Game:
         return [start_player, (start_player + 1) % 4, (start_player + 2) % 4, (start_player + 3) % 4]
 
     def play_round(self):
-        """Plays a round by choosing an action using the Q-network.
+        """
+        Plays a round by choosing an action using the Q-network.
 
         Returns:
             action (str): The chosen action (card to play).
@@ -153,6 +166,7 @@ class Game:
         """Plays a full game."""
         self.reset()
         while not self.game_over():
+            self.reset_round()
             self.bid_round()
             self.play_round()
 
@@ -290,7 +304,7 @@ class BiddingInput:
 
     @staticmethod
     def encode_hand(hand):
-        # Encoding cards (9 through Ace for 4 suits)
+        """Encodes the hand of cards into a binary representation."""
         hand_encoding = np.zeros((24,))  # 6 ranks x 4 suits
         for card in hand:
             rank, suit = card[:-1], card[-1]
@@ -302,7 +316,7 @@ class BiddingInput:
 
     @staticmethod
     def encode_bid(bid):
-        # Define possible bids including 'pfeffer'
+        """Encodes the bid into a binary representation."""
         possible_bids = [0, 4, 5, 6, 'pfeffer']
         encoding = [0] * len(possible_bids)
 
@@ -313,6 +327,7 @@ class BiddingInput:
         return encoding
 
     def encode(self):
+        """Encodes the bidding state into a single vector."""
         hand_encoding = BiddingInput.encode_hand(self.hand)
 
         previous_bids_encoding = [BiddingInput.encode_bid(bid) for bid in self.previous_bids]
@@ -344,7 +359,7 @@ class BiddingInput:
 
 
 class BiddingActions:
-    """Class to handle the action space for the bidding phase."""
+    """Represents the possible bidding actions in Pfeffer."""
 
     BIDS = [0, 4, 5, 6, 'pfeffer']
     SUITS = ['S', 'H', 'D', 'C', 'NT']  # NT represents No-Trump
@@ -614,7 +629,7 @@ class PlayInput:
 
 class PlayActions:
     """
-    A class to manage and encode actions related to playing a card.
+    Represents the possible play actions in Pfeffer.
 
     Attributes:
         CARDS (list): List of possible cards a player can have.
