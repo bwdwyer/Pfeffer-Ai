@@ -1,4 +1,5 @@
 import random
+from typing import List, Union
 
 import numpy as np
 import tensorflow as tf
@@ -369,7 +370,8 @@ class BiddingActions:
         self.actions = self.BIDS + self.SUITS
 
     def get_action(self, index):
-        """Returns the action corresponding to a given index.
+        """
+        Returns the action corresponding to a given index.
 
         Args:
             index (int): The index of the action.
@@ -380,7 +382,8 @@ class BiddingActions:
         return self.actions[index]
 
     def get_index(self, action):
-        """Returns the index corresponding to a given action.
+        """
+        Returns the index corresponding to a given action.
 
         Args:
             action (int or str): The action.
@@ -391,7 +394,8 @@ class BiddingActions:
         return self.actions.index(action)
 
     def get_number_of_actions(self):
-        """Returns the total number of actions in the action space.
+        """
+        Returns the total number of actions in the action space.
 
         Returns:
             int: The total number of actions.
@@ -399,7 +403,8 @@ class BiddingActions:
         return len(self.actions)
 
     def is_bid(self, action):
-        """Checks if an action is a bid.
+        """
+        Checks if an action is a bid.
 
         Args:
             action (int or str): The action.
@@ -410,7 +415,8 @@ class BiddingActions:
         return action in self.BIDS
 
     def is_suit_choice(self, action):
-        """Checks if an action is a suit choice.
+        """
+        Checks if an action is a suit choice.
 
         Args:
             action (str): The action.
@@ -422,7 +428,8 @@ class BiddingActions:
 
 
 class PlayInput:
-    """Represents the input to the Q-network for the game Pfeffer.
+    """
+    Represents the input to the Q-network for the game Pfeffer.
 
     Attributes:
         player_id (int): The ID of the player (0-3).
@@ -450,7 +457,8 @@ class PlayInput:
 
     @staticmethod
     def encode_card(card):
-        """Encodes a card into a one-hot vector.
+        """
+        Encodes a card into a one-hot vector.
 
         Args:
             card (str): The card to encode.
@@ -468,8 +476,100 @@ class PlayInput:
         return encoding
 
     @staticmethod
+    def decode_card(encoded_card: Union[np.ndarray, List[int]]):
+        """
+        Decodes a one-hot encoded card back to its string representation.
+
+        Args:
+            encoded_card (Union[np.ndarray, List[int]]): A 24-element one-hot encoding of the card.
+
+        Returns:
+            str: The decoded card in string format or None if the encoding is all zeros.
+        """
+        # If the encoded card is a vector of zeros, return None
+        if sum(encoded_card) == 0:
+            return None
+
+        possible_ranks = ['9', 'T', 'J', 'Q', 'K', 'A']
+        possible_suits = ['S', 'H', 'D', 'C']
+
+        if isinstance(encoded_card, np.ndarray):
+            encoded_card = encoded_card.tolist()  # Convert numpy ndarray to list
+
+        index = encoded_card.index(1)
+        rank = possible_ranks[index // 4]
+        suit = possible_suits[index % 4]
+
+        return rank + suit
+
+    @staticmethod
+    def encode_played_cards(played_cards):
+        """
+        Encodes a list of played cards.
+
+        Args:
+            played_cards (list): A list of played cards, organized by trick.
+
+        Returns:
+            np.array: A one-hot encoding of the played cards.
+        """
+        encoding = []
+        for trick in played_cards:
+            for player_id in range(4):
+                card_encoding = [0] * 24  # Initialize encoding for each player
+                for card, player in trick:
+                    if player == player_id:  # If the player played a card in this trick
+                        card_encoding = PlayInput.encode_card(card)  # Encode the card
+                        break  # Only one card per player per trick, so we can stop here
+                encoding += card_encoding  # Add encoding to the list
+        return np.array(encoding)
+
+    @staticmethod
+    def decode_played_cards(encoded_cards):
+        """
+        Decodes a one-hot encoded list of played cards.
+
+        Args:
+            encoded_cards (ndarray): A one-hot encoding of the played cards.
+
+        Returns:
+            list: The decoded played cards, organized by trick.
+        """
+        played_cards = []
+        for i in range(6):  # for each trick
+            trick = []
+            for j in range(4):  # for each player
+                card_encoded = encoded_cards[i * 4 * 24 + j * 24: i * 4 * 24 + (j + 1) * 24]
+                card = PlayInput.decode_card(card_encoded)
+                if card:
+                    trick.append((card, j))
+            played_cards.append(trick)
+        return played_cards
+
+    @staticmethod
+    def decode_hand(encoded_hand):
+        """
+        Decodes a one-hot encoded hand back to its card representations.
+
+        Args:
+            encoded_hand (ndarray): A 24-element one-hot encoding of the hand.
+
+        Returns:
+            list: The decoded cards in the hand.
+        """
+        hand = []
+        for i in range(24):  # Iterate over each possible card
+            if encoded_hand[i] == 1:
+                card_encoding = [0] * 24  # Initialize a blank encoding
+                card_encoding[i] = 1  # Set the corresponding bit for the card
+                card = PlayInput.decode_card(card_encoding)
+                hand.append(card)
+        return hand
+
+    @staticmethod
     def encode_bid(bid):
-        """Encodes a bid into a one-hot vector.
+        """
+        Encodes a bid into a one-hot vector.
 
         Args:
             bid (int/str): The bid to encode.
@@ -487,29 +587,64 @@ class PlayInput:
 
     @staticmethod
     def encode_winning_bid(winning_bid):
-        """Encodes a winning bid into a one-hot vector.
+        """
+        Encodes the winning bid into a one-hot format.
 
         Args:
-            winning_bid (tuple): The winning bid to encode.
+            winning_bid (tuple): The winning bid in the form (quantity, player, suit).
 
         Returns:
-            list: A 10-element one-hot encoding of the winning bid.
+            np.array: The one-hot encoding of the bid.
         """
+        bid_quantity, player, bid_suit = winning_bid
         possible_bids = [0, 4, 5, 6, 'pfeffer']
         possible_suits = ['S', 'H', 'D', 'C', 'no-trump']
+        possible_players = [0, 1, 2, 3]
 
-        bid_quantity, bid_suit = winning_bid
         bid_quantity_encoding = [0] * len(possible_bids)
-        bid_suit_encoding = [0] * len(possible_suits)
-
         bid_quantity_encoding[possible_bids.index(bid_quantity)] = 1
+
+        player_encoding = [0] * len(possible_players)
+        player_encoding[possible_players.index(player)] = 1
+
+        bid_suit_encoding = [0] * len(possible_suits)
         bid_suit_encoding[possible_suits.index(bid_suit)] = 1
 
-        return bid_quantity_encoding + bid_suit_encoding
+        return np.concatenate([bid_quantity_encoding, player_encoding, bid_suit_encoding])
+
+    @staticmethod
+    def decode_winning_bid(encoded_bid):
+        """
+        Decodes a one-hot encoded bid back to its original form.
+
+        Args:
+            encoded_bid (ndarray): A one-hot encoding of the bid.
+
+        Returns:
+            tuple: The decoded bid in the form (quantity, player, suit) or None if the encoding is all zeros.
+        """
+        # If the encoded bid is a vector of zeros, return None
+        if sum(encoded_bid) == 0:
+            return None
+
+        possible_bids = [0, 4, 5, 6, 'pfeffer']
+        possible_players = [0, 1, 2, 3]
+        possible_suits = ['S', 'H', 'D', 'C', 'no-trump']
+
+        bid_encoded = encoded_bid[:5].tolist()  # Convert numpy ndarray to list
+        player_encoded = encoded_bid[5:9].tolist()  # Convert numpy ndarray to list
+        suit_encoded = encoded_bid[9:].tolist()  # Convert numpy ndarray to list
+
+        bid_quantity = possible_bids[bid_encoded.index(1)]
+        player = possible_players[player_encoded.index(1)]
+        bid_suit = possible_suits[suit_encoded.index(1)]
+
+        return bid_quantity, player, bid_suit
 
     @staticmethod
     def encode_lead_players(lead_players):
-        """Encodes the players who led each trick into one-hot vectors.
+        """
+        Encodes the players who led each trick into one-hot vectors.
 
         Args:
             lead_players (list): The players who led each trick.
@@ -530,7 +665,8 @@ class PlayInput:
 
     @staticmethod
     def encode_current_trick(current_trick):
-        """Encodes the current trick number into a one-hot vector.
+        """
+        Encodes the current trick number into a one-hot vector.
 
         Args:
             current_trick (int): The current trick number.
@@ -546,7 +682,8 @@ class PlayInput:
 
     @staticmethod
     def encode_bidding_order(bidding_order):
-        """Encodes the bidding order into one-hot vectors.
+        """
+        Encodes the bidding order into one-hot vectors.
 
         Args:
             bidding_order (list): The bidding order.
@@ -565,7 +702,8 @@ class PlayInput:
         return [item for sublist in bidding_order_encoding for item in sublist]
 
     def encode(self):
-        """Encodes the state into a single vector.
+        """
+        Encodes the state into a single vector.
 
         Returns:
             np.array: A single vector representing the encoded state.
@@ -578,8 +716,9 @@ class PlayInput:
             card_one_hot = self.encode_card(card)
             card_encoding = [x or y for x, y in zip(card_encoding, card_one_hot)]
 
-        played_cards_encoding = [self.encode_card(card) for trick in self.played_cards for card in trick]
-        played_cards_encoding = [item for sublist in played_cards_encoding for item in sublist]
+        # played_cards_encoding = [self.encode_card(card[0]) for trick in self.played_cards for card in trick]
+        # played_cards_encoding = [item for sublist in played_cards_encoding for item in sublist]
+        played_cards_encoding = self.encode_played_cards(self.played_cards)
 
         bidding_order_encoding = self.encode_bidding_order(self.bidding_order)
 
@@ -608,6 +747,97 @@ class PlayInput:
         return input_vector
 
     @classmethod
+    def decode(cls, encoded_state):
+        """
+        Decodes an encoded state back to a PlayInput object.
+
+        Args:
+            encoded_state (np.array): The encoded state.
+
+        Returns:
+            PlayInput: The decoded PlayInput object.
+        """
+
+        def decode_one_hot(one_hot_list, possible_values):
+            """
+            Decodes a one-hot encoded list.
+
+            Args:
+                one_hot_list (List[int]): One-hot encoded list.
+                possible_values (List[Any]): Possible values that can be represented by the one-hot encoding.
+
+            Returns:
+                Any: The value represented by the one-hot encoding, or None if the one-hot encoding is all zeros.
+            """
+            if isinstance(one_hot_list, np.ndarray):
+                one_hot_list = one_hot_list.tolist()
+
+            # If the one_hot_list is a vector of zeros, return None
+            if sum(one_hot_list) == 0:
+                return None
+
+            index = one_hot_list.index(1)
+            return possible_values[index]
+
+        pointer = 0
+
+        # Decode player_id
+        player_id = decode_one_hot(encoded_state[pointer:pointer + 4], [0, 1, 2, 3])
+        pointer += 4
+
+        # Decode hand
+        card_encoded = encoded_state[pointer:pointer + 24]
+        hand = PlayInput.decode_hand(card_encoded)
+        pointer += 24
+
+        # Decode played_cards
+        played_cards_encoded = encoded_state[pointer:pointer + 24 * 6 * 4]
+        played_cards = PlayInput.decode_played_cards(played_cards_encoded)
+        pointer += 24 * 6 * 4
+
+        # Decode bidding_order
+        bidding_order = []
+        for i in range(4):
+            player_encoded = encoded_state[pointer:pointer + 4]
+            player = decode_one_hot(player_encoded, [0, 1, 2, 3])
+            bidding_order.append(player)
+            pointer += 4
+
+        # Decode all_bids
+        all_bids = []
+        for i in range(4):
+            bid_encoded = encoded_state[pointer:pointer + 5]
+            bid = decode_one_hot(bid_encoded, [0, 4, 5, 6, 'pfeffer'])
+            all_bids.append(bid)
+            pointer += 5
+
+        # Decode winning_bid
+        winning_bid_encoded = encoded_state[pointer:pointer + 14]
+        winning_bid = PlayInput.decode_winning_bid(winning_bid_encoded)
+        pointer += 14
+
+        # Decode lead_players
+        lead_players = []
+        for i in range(6):
+            player_encoded = encoded_state[pointer:pointer + 5]
+            player = decode_one_hot(player_encoded, [-1, 0, 1, 2, 3])
+            if player == -1:
+                player = None
+            lead_players.append(player)
+            pointer += 5
+
+        # Decode current_trick
+        current_trick_encoded = encoded_state[pointer:pointer + 6]
+        current_trick = decode_one_hot(current_trick_encoded, [0, 1, 2, 3, 4, 5])
+        pointer += 6
+
+        # Extract score
+        score = list(encoded_state[pointer:pointer + 2])
+
+        return cls(player_id, hand, played_cards, bidding_order, all_bids, winning_bid, lead_players, current_trick,
+                   score)
+
+    @classmethod
     def from_game_state(cls, player_id, game_state):
         """Creates a PlayInput object from a game state."""
         # Extract relevant information from the game state
@@ -617,7 +847,8 @@ class PlayInput:
         all_bids = game_state["all_bids"]
         winning_bid = game_state["winning_bid"]
         lead_players = game_state["lead_players"]
-        current_trick = len(played_cards) - 1 if played_cards else 0
+        # current_trick = len(played_cards) - 1 if played_cards else 0
+        current_trick = max(index for index, trick in enumerate(played_cards) if trick) if played_cards else 0
         score = game_state["score"]
 
         # Create a PlayInput object
