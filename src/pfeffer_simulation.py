@@ -305,7 +305,23 @@ class BiddingInput:
 
     @staticmethod
     def encode_hand(hand):
-        """Encodes the hand of cards into a binary representation."""
+        """
+        Encodes a hand of cards into a binary representation.
+
+        This method assumes that the hand is a list of strings, each string
+        representing a card. The cards are encoded in the order of ranks and suits
+        defined by the list ['9', 'T', 'J', 'Q', 'K', 'A'] and ['S', 'H', 'D', 'C']
+        respectively.
+
+        Each card in the hand is represented as a one-hot encoded vector of length 24
+        (6 ranks x 4 suits). The vector is then flattened into a 1D array.
+
+        Args:
+            hand (list): A list of strings, each string representing a card in the hand.
+
+        Returns:
+            numpy.ndarray: A 24-element binary array representing the hand.
+        """
         hand_encoding = np.zeros((24,))  # 6 ranks x 4 suits
         for card in hand:
             rank, suit = card[:-1], card[-1]
@@ -316,8 +332,46 @@ class BiddingInput:
         return hand_encoding
 
     @staticmethod
+    def decode_hand(encoded_hand):
+        """
+        Decodes a one-hot encoded hand back to its original form.
+
+        Args:
+            encoded_hand (ndarray): A 24-element one-hot encoding of the hand.
+
+        Returns:
+            list: The decoded hand as a list of strings representing cards.
+        """
+        possible_ranks = ['9', 'T', 'J', 'Q', 'K', 'A']
+        possible_suits = ['S', 'H', 'D', 'C']
+
+        hand = []
+        for i in range(0, len(encoded_hand), 4):
+            if sum(encoded_hand[i:i + 4]) != 0:  # If the card exists in the hand
+                index = np.argmax(encoded_hand[i:i + 4])
+                rank = possible_ranks[i // 4]
+                suit = possible_suits[index]
+                hand.append(rank + suit)
+        return hand
+
+    @staticmethod
     def encode_bid(bid):
-        """Encodes the bid into a binary representation."""
+        """
+        Encodes a bid into a binary representation.
+
+        This method assumes that the bid is either a string or an integer, and
+        that the possible bids are [0, 4, 5, 6, 'pfeffer'].
+
+        Each bid is represented as a one-hot encoded vector of length equal to
+        the number of possible bids. If the bid is None, all elements of the
+        vector are zero.
+
+        Args:
+            bid (int or str): The bid to encode.
+
+        Returns:
+            list: A one-hot encoded list representing the bid.
+        """
         possible_bids = [0, 4, 5, 6, 'pfeffer']
         encoding = [0] * len(possible_bids)
 
@@ -327,8 +381,41 @@ class BiddingInput:
 
         return encoding
 
+    @staticmethod
+    def decode_bid(encoded_bid):
+        """
+        Decodes a one-hot encoded bid back to its original form.
+
+        Args:
+            encoded_bid (ndarray): A 6-element one-hot encoding of the bid.
+
+        Returns:
+            str or int: The decoded bid.
+        """
+        possible_bids = [0, 4, 5, 6, 'pfeffer']
+        index = np.argmax(encoded_bid)
+        return possible_bids[index]
+
     def encode(self):
-        """Encodes the bidding state into a single vector."""
+        """
+        Encodes the bidding state into a single vector.
+
+        This method encodes the current state of bidding, including the player's hand,
+        previous bids, dealer position, and score, into a single numpy array.
+
+        The hand is encoded using the encode_hand method, and each bid is encoded
+        using the encode_bid method. These encodings are then flattened and concatenated
+        into a single vector.
+
+        The dealer position and score are converted into numpy arrays and appended
+        to the vector. The previous bids are encoded and appended to the vector.
+
+        Args:
+            self
+
+        Returns:
+            numpy.ndarray: A vector representing the encoded bidding state.
+        """
         hand_encoding = BiddingInput.encode_hand(self.hand)
 
         previous_bids_encoding = [BiddingInput.encode_bid(bid) for bid in self.previous_bids]
@@ -343,6 +430,41 @@ class BiddingInput:
         ])
 
         return input_vector
+
+    @classmethod
+    def decode(cls, encoded_state):
+        """
+        Decodes the encoded state into a BiddingInput object.
+
+        Args:
+            encoded_state (ndarray): Encoded state as a single vector.
+
+        Returns:
+            BiddingInput: Decoded BiddingInput object.
+        """
+        # Decode hand
+        hand_encoded = encoded_state[:24]
+        hand = cls.decode_hand(hand_encoded)
+
+        # Decode previous bids
+        # previous_bids_encoded = encoded_state[26:31]
+        # previous_bids = [cls.decode_bid(bid_encoded) for bid_encoded in previous_bids_encoded]
+
+        # Decode dealer position
+        dealer_position = int(encoded_state[24])
+
+        # Decode score
+        score = encoded_state[25:27].tolist()
+
+        # Decode previous bids
+        previous_bids_encoded = encoded_state[27:]
+        previous_bids = []
+        for i in range(0, len(previous_bids_encoded), 5):
+            bid_encoded = previous_bids_encoded[i:i + 5]
+            bid = cls.decode_bid(bid_encoded)
+            previous_bids.append(bid)
+
+        return cls(hand, previous_bids, dealer_position, score)
 
     @classmethod
     def from_game_state(cls, player_id, game_state):
