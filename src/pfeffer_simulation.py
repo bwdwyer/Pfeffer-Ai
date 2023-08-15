@@ -3,6 +3,9 @@ from typing import List, Union
 
 import numpy as np
 import tensorflow as tf
+from tf_agents.replay_buffers import tf_uniform_replay_buffer
+from tf_agents.specs import tensor_spec
+from tf_agents.trajectories import trajectory
 
 SUITS_COLORS = {"S": "black", "C": "black", "H": "red", "D": "red"}
 
@@ -25,6 +28,55 @@ class Game:
             "winning_bid": (-1, -1, None),  # No winning bid yet, (bid, player_id, trump_suit)
             "lead_players": [None] * 6,  # No lead players yet
         }
+
+        # Create bid data spec
+        bid_state_spec = {
+            'hand': tensor_spec.TensorSpec(shape=(24,), dtype=tf.int32),
+            'dealer_position': tensor_spec.TensorSpec(shape=1, dtype=tf.int32),
+            'score': tensor_spec.TensorSpec(shape=(2,), dtype=tf.int32),
+            'previous_bids': tensor_spec.TensorSpec(shape=(15,), dtype=tf.int32),
+        }
+        bid_action_spec = tensor_spec.BoundedTensorSpec(shape=(), dtype=tf.int32, minimum=0, maximum=4)
+        bid_data_spec = trajectory.Trajectory(
+            observation=bid_state_spec,
+            action=bid_action_spec,
+            policy_info=(),
+            reward=tensor_spec.TensorSpec(shape=(), dtype=tf.float32),
+            discount=tensor_spec.TensorSpec(shape=(), dtype=tf.float32),
+            step_type=tensor_spec.TensorSpec(shape=(), dtype=tf.int32)
+        )
+
+        # Create play data spec
+        play_state_spec = {
+            'player_id': tensor_spec.TensorSpec(shape=(4,), dtype=tf.float32),
+            'hand': tensor_spec.TensorSpec(shape=(24,), dtype=tf.float32),
+            'played_cards': tensor_spec.TensorSpec(shape=(6 * 4 * 24,), dtype=tf.int32),
+            'bidding_order': tensor_spec.TensorSpec(shape=(16,), dtype=tf.int32),
+            'all_bids': tensor_spec.TensorSpec(shape=(20,), dtype=tf.int32),
+            'winning_bid_encoding': tensor_spec.TensorSpec(shape=(10,), dtype=tf.int32),
+            'lead_players': tensor_spec.TensorSpec(shape=(24,), dtype=tf.int32),
+            'current_trick': tensor_spec.TensorSpec(shape=(6,), dtype=tf.int32),
+            'score': tensor_spec.TensorSpec(shape=(2,), dtype=tf.int32),
+            # Add more components if needed...
+        }
+        play_action_spec = tensor_spec.BoundedTensorSpec(shape=(), dtype=tf.int32, minimum=0, maximum=23)
+        play_data_spec = trajectory.Trajectory(
+            observation=play_state_spec,
+            action=play_action_spec,
+            policy_info=(),
+            reward=tensor_spec.TensorSpec(shape=(), dtype=tf.float32),
+            discount=tensor_spec.TensorSpec(shape=(), dtype=tf.float32),
+            step_type=tensor_spec.TensorSpec(shape=(), dtype=tf.int32)
+        )
+
+        # Initialize replay buffers
+        max_length = 1_000
+        self.bid_replay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(
+            bid_data_spec, batch_size=1, max_length=max_length
+        )
+        self.play_replay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(
+            play_data_spec, batch_size=1, max_length=max_length
+        )
 
     def reset(self):
         """Resets the game to the initial state."""
@@ -833,10 +885,10 @@ class PlayInput:
         player_id_encoding = [0] * 4
         player_id_encoding[self.player_id] = 1
 
-        card_encoding = [0] * 24
+        hand_encoding = [0] * 24
         for card in self.hand:
             card_one_hot = self.encode_card(card)
-            card_encoding = [x or y for x, y in zip(card_encoding, card_one_hot)]
+            hand_encoding = [x or y for x, y in zip(hand_encoding, card_one_hot)]
 
         # played_cards_encoding = [self.encode_card(card[0]) for trick in self.played_cards for card in trick]
         # played_cards_encoding = [item for sublist in played_cards_encoding for item in sublist]
@@ -857,7 +909,7 @@ class PlayInput:
 
         input_vector = np.concatenate([
             player_id_encoding,
-            card_encoding,
+            hand_encoding,
             played_cards_encoding,
             bidding_order_encoding,
             all_bids_encoding,

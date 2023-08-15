@@ -1,6 +1,71 @@
 from unittest import TestCase
 
-from src.pfeffer_simulation import BiddingInput, PlayInput
+from src.pfeffer_simulation import BiddingInput, Game, PlayInput
+
+
+# noinspection DuplicatedCode
+class TestGame(TestCase):
+
+    def test_reset(self):
+        # Initialize models for bidding and playing (replace with actual models if needed)
+        bid_model = None
+        play_model = None
+
+        # Initialize a game
+        game = Game(bid_model, play_model)
+
+        # Modify the game state to simulate a game in progress
+        game.game_state["score"] = [15, 20]
+        game.game_state["played_cards"][0] = [('9S', 0), ('9H', 1), ('9D', 2), ('JC', 3)]
+        game.game_state["all_bids"] = [4, 5, 0, 'pfeffer']
+        game.game_state["winning_bid"] = ('pfeffer', 3, 'C')
+
+        # Call the reset method
+        game.reset()
+
+        # Verify that the game state has been reset
+        assert [0, 0] == game.game_state["score"]
+        assert [None] * 6 == game.game_state["lead_players"]
+        assert all(len(trick) == 0 for trick in game.game_state["played_cards"])
+        assert [] == game.game_state["all_bids"]
+        assert (-1, -1, None) == game.game_state["winning_bid"]
+
+        # Verify that the hands have been reset (if you want to test this, you may need additional logic)
+        for player in game.players:
+            assert 6 == len(player.hand)
+
+    def test_reset_round(self):
+        # Initialize models for bidding and playing (replace with actual models if needed)
+        bid_model = None
+        play_model = None
+
+        # Initialize a game
+        game = Game(bid_model, play_model)
+
+        # Modify the game state to simulate a game in progress
+        game.game_state["score"] = [15, 20]
+        game.game_state["played_cards"][0] = [('9S', 0), ('9H', 1), ('9D', 2), ('JC', 3)]
+        game.game_state["all_bids"] = [4, 5, 0, 'pfeffer']
+        game.game_state["winning_bid"] = ('pfeffer', 3, 'C')
+
+        # Store the original score to verify that it doesn't change
+        original_score = game.game_state["score"].copy()
+
+        # Call the reset_round method
+        game.reset_round()
+
+        # Verify that round-specific state has been reset
+        assert [None] * 6 == game.game_state["lead_players"]
+        assert all(len(trick) == 0 for trick in game.game_state["played_cards"])
+        assert [] == game.game_state["all_bids"]
+        assert (-1, -1, None) == game.game_state["winning_bid"]
+
+        # Verify that the score has not been changed
+        assert original_score == game.game_state["score"]
+
+        # Verify that the hands have been reset (if you want to test this, you may need additional logic)
+        for player in game.players:
+            assert 6 == len(player.hand)
 
 
 class TestBiddingInput(TestCase):
