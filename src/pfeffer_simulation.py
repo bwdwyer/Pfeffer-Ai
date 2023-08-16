@@ -29,55 +29,6 @@ class Game:
             "lead_players": [None] * 6,  # No lead players yet
         }
 
-        # Create bid data spec
-        bid_state_spec = {
-            'hand': tensor_spec.TensorSpec(shape=(24,), dtype=tf.int32),
-            'dealer_position': tensor_spec.TensorSpec(shape=1, dtype=tf.int32),
-            'score': tensor_spec.TensorSpec(shape=(2,), dtype=tf.int32),
-            'previous_bids': tensor_spec.TensorSpec(shape=(15,), dtype=tf.int32),
-        }
-        bid_action_spec = tensor_spec.BoundedTensorSpec(shape=(), dtype=tf.int32, minimum=0, maximum=4)
-        bid_data_spec = trajectory.Trajectory(
-            observation=bid_state_spec,
-            action=bid_action_spec,
-            policy_info=(),
-            reward=tensor_spec.TensorSpec(shape=(), dtype=tf.float32),
-            discount=tensor_spec.TensorSpec(shape=(), dtype=tf.float32),
-            step_type=tensor_spec.TensorSpec(shape=(), dtype=tf.int32)
-        )
-
-        # Create play data spec
-        play_state_spec = {
-            'player_id': tensor_spec.TensorSpec(shape=(4,), dtype=tf.float32),
-            'hand': tensor_spec.TensorSpec(shape=(24,), dtype=tf.float32),
-            'played_cards': tensor_spec.TensorSpec(shape=(6 * 4 * 24,), dtype=tf.int32),
-            'bidding_order': tensor_spec.TensorSpec(shape=(16,), dtype=tf.int32),
-            'all_bids': tensor_spec.TensorSpec(shape=(20,), dtype=tf.int32),
-            'winning_bid_encoding': tensor_spec.TensorSpec(shape=(10,), dtype=tf.int32),
-            'lead_players': tensor_spec.TensorSpec(shape=(24,), dtype=tf.int32),
-            'current_trick': tensor_spec.TensorSpec(shape=(6,), dtype=tf.int32),
-            'score': tensor_spec.TensorSpec(shape=(2,), dtype=tf.int32),
-            # Add more components if needed...
-        }
-        play_action_spec = tensor_spec.BoundedTensorSpec(shape=(), dtype=tf.int32, minimum=0, maximum=23)
-        play_data_spec = trajectory.Trajectory(
-            observation=play_state_spec,
-            action=play_action_spec,
-            policy_info=(),
-            reward=tensor_spec.TensorSpec(shape=(), dtype=tf.float32),
-            discount=tensor_spec.TensorSpec(shape=(), dtype=tf.float32),
-            step_type=tensor_spec.TensorSpec(shape=(), dtype=tf.int32)
-        )
-
-        # Initialize replay buffers
-        max_length = 1_000
-        self.bid_replay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(
-            bid_data_spec, batch_size=1, max_length=max_length
-        )
-        self.play_replay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(
-            play_data_spec, batch_size=1, max_length=max_length
-        )
-
     def reset(self):
         """Resets the game to the initial state."""
 
@@ -237,6 +188,56 @@ class Player:
         self.bidding_actions = bidding_actions
         self.play_actions = play_actions
 
+        # Create bid data spec
+        bid_state_spec = {
+            'hand': tf.TensorSpec(shape=(24,), dtype=tf.int32),
+            'dealer_position': tf.TensorSpec(shape=1, dtype=tf.int32),
+            'score': tf.TensorSpec(shape=(2,), dtype=tf.int32),
+            'previous_bids': tf.TensorSpec(shape=(15,), dtype=tf.int32),
+        }
+        bid_action_spec = tensor_spec.BoundedTensorSpec(shape=(), dtype=tf.int32, minimum=0, maximum=4)
+        bid_data_spec = trajectory.Trajectory(
+            observation=bid_state_spec,
+            action=bid_action_spec,
+            policy_info=(),
+            reward=tf.TensorSpec(shape=(), dtype=tf.float32),
+            discount=tf.TensorSpec(shape=(), dtype=tf.float32),
+            step_type=tf.TensorSpec(shape=(), dtype=tf.int32),
+            next_step_type=tf.TensorSpec(shape=(), dtype=tf.int32),
+        )
+
+        # Create play data spec
+        play_state_spec = {
+            'player_id': tf.TensorSpec(shape=(4,), dtype=tf.float32),
+            'hand': tf.TensorSpec(shape=(24,), dtype=tf.float32),
+            'played_cards': tf.TensorSpec(shape=(6 * 4 * 24,), dtype=tf.int32),
+            'bidding_order': tf.TensorSpec(shape=(16,), dtype=tf.int32),
+            'all_bids': tf.TensorSpec(shape=(20,), dtype=tf.int32),
+            'winning_bid_encoding': tf.TensorSpec(shape=(10,), dtype=tf.int32),
+            'lead_players': tf.TensorSpec(shape=(24,), dtype=tf.int32),
+            'current_trick': tf.TensorSpec(shape=(6,), dtype=tf.int32),
+            'score': tf.TensorSpec(shape=(2,), dtype=tf.int32),
+        }
+        play_action_spec = tensor_spec.BoundedTensorSpec(shape=(), dtype=tf.int32, minimum=0, maximum=23)
+        play_data_spec = trajectory.Trajectory(
+            observation=play_state_spec,
+            action=play_action_spec,
+            policy_info=(),
+            reward=tf.TensorSpec(shape=(), dtype=tf.float32),
+            discount=tf.TensorSpec(shape=(), dtype=tf.float32),
+            step_type=tf.TensorSpec(shape=(), dtype=tf.int32),
+            next_step_type=tf.TensorSpec(shape=(), dtype=tf.int32),
+        )
+
+        # Initialize replay buffers
+        max_length = 1_000
+        self.bid_replay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(
+            bid_data_spec, batch_size=1, max_length=max_length
+        )
+        self.play_replay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(
+            play_data_spec, batch_size=1, max_length=max_length
+        )
+
     def make_bid(self, game_state):
         """Makes a bid and chooses a trump suit based on the current game state."""
         # Create a BiddingInput object from the game state
@@ -311,6 +312,43 @@ class Player:
 
         return action
 
+    def save_to_bid_buffer(self, bidding_input, action_taken, reward_received, next_bidding_input):
+        # Encode the current and next bidding states
+        current_observation = bidding_input.encode()
+        next_observation = next_bidding_input.encode()
+
+        # Create a trajectory with the experience
+        experience = trajectory.Trajectory(
+            step_type=tf.constant([0], dtype=tf.int32),  # Adjust step_type as needed
+            observation=current_observation,
+            action=action_taken,
+            policy_info=(),
+            next_step_type=tf.constant([0], dtype=tf.int32),  # Adjust next_step_type as needed
+            reward=tf.constant([reward_received], dtype=tf.float32),
+            discount=tf.constant([1.0], dtype=tf.float32),  # Adjust discount factor as needed
+        )
+
+        # Add the experience to the bid replay buffer
+        self.bid_replay_buffer.add_batch(experience)
+
+    def save_to_play_buffer(self, play_input, action_taken, reward_received, next_play_input):
+        # Encode the current and next playing states
+        current_observation = play_input.encode()
+        next_observation = next_play_input.encode()
+
+        # Create a trajectory with the experience
+        experience = trajectory.Trajectory(
+            step_type=tf.constant([0], dtype=tf.int32),  # Adjust step_type as needed
+            observation=current_observation,
+            action=action_taken,
+            policy_info=(),
+            next_step_type=tf.constant([0], dtype=tf.int32),  # Adjust next_step_type as needed
+            reward=tf.constant([reward_received], dtype=tf.float32),
+            discount=tf.constant([1.0], dtype=tf.float32),  # Adjust discount factor as needed
+        )
+
+        # Add the experience to the play replay buffer
+        self.play_replay_buffer.add_batch(experience)
 
 class BiddingInput:
     """
