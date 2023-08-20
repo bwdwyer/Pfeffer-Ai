@@ -27,6 +27,7 @@ class Game:
             "all_bids": [],  # No bids have been made
             "winning_bid": (-1, -1, None),  # No winning bid yet, (bid, player_id, trump_suit)
             "lead_players": [None] * 6,  # No lead players yet
+            "trick_winners": [None] * 6,
         }
 
     def reset(self):
@@ -62,6 +63,9 @@ class Game:
         # Reset lead players for tricks
         self.game_state["lead_players"] = [None] * 6
 
+        # Reset trick winners
+        self.game_state["trick_winners"] = [None] * 6
+
     def step(self, player, action):
         """Executes a player's action and updates the game state."""
         # Update game state based on action
@@ -72,6 +76,13 @@ class Game:
         for player in self.players:
             # Get bid from player
             bid, trump_suit = player.make_bid(self.game_state)
+
+            #  Save the experience to the replay buffer
+            # observation = ... # Define the current observation for bidding
+            # action = bid
+            # reward = ... # Define the reward for this bid
+            # next_observation = ... # Define the next observation for bidding
+            # player.save_bid_experience(observation, action, reward, next_observation)
 
             # Update game state with bid
             self.game_state["all_bids"].append(bid)
@@ -107,6 +118,8 @@ class Game:
         while play_order[0] != bid_winner:
             play_order.append(play_order.pop(0))
 
+        experiences = np.zeros((4, 6, 2))
+
         for trick in range(6):  # 6 tricks in a round
             for player_id in play_order:
                 # Skip the partner's turn if the bid winner is playing alone
@@ -115,18 +128,42 @@ class Game:
                         (partner_id, None))  # Record that the partner did not play a card
                     continue
 
+                play_input = PlayInput.from_game_state(player_id, self.game_state)
+
                 # Ask the player to make a play
-                play = self.players[player_id].make_play(self.game_state)
+                play = self.players[player_id].make_play(play_input)
+
+                experiences[player_id][trick][0] = play_input
+                experiences[player_id][trick][1] = play
 
                 # Update the game state with the play
                 self.game_state["played_cards"][trick].append((player_id, play))
 
             # Update the play order so the player who won the trick leads the next one
             trick_winner = self.evaluate_trick()
+
+            if 0 < trick < 5:
+                # noinspection PyTypeChecker
+                self.game_state["lead_players"][trick + 1] = trick_winner
             # noinspection PyTypeChecker
-            self.game_state["lead_players"][trick] = trick_winner
+            self.game_state["trick_winners"][trick] = trick_winner
             while play_order[0] != trick_winner:
                 play_order.append(play_order.pop(0))
+
+        # Update the score after the round
+        (score_team1, score_team2) = self.evaluate_round()
+        self.game_state["score"][0] += score_team1
+        self.game_state["score"][1] += score_team2
+
+        # Save results to replay buffer
+        for trick in range(6):
+            for player_id in play_order:
+                reward = score_team1 - score_team2 if player_id in [0, 2] else -(score_team1 - score_team2)
+                self.players[player_id].save_to_play_buffer(
+                    play_input=experiences[player_id][trick][0],
+                    action_taken=experiences[player_id][trick][1],
+                    reward_received=reward
+                )
 
     def evaluate_trick(self):
         """
@@ -165,6 +202,49 @@ class Game:
 
         # Return the player_id of the winner
         return winning_card[0]
+
+    def evaluate_round(self):
+        # Extract the winning bid information
+        bid_winner = self.game_state["winning_bid"][1]
+        bid_value = self.game_state["winning_bid"][0]
+
+        # Determine the teams (e.g., players 0 and 2 are on one team, 1 and 3 are on the other)
+        team1 = [0, 2]
+        team2 = [1, 3]
+
+        # Track the number of tricks won by each team
+        tricks_won_team1 = 0
+        tricks_won_team2 = 0
+
+        # Calculate the number of tricks won by each team
+        for trick_winner in self.game_state["trick_winners"]:
+            if trick_winner in team1:
+                tricks_won_team1 += 1
+            else:
+                tricks_won_team2 += 1
+
+        # Determine the winning team and calculate the new score
+        bidding_team_tricks_required = 6 if bid_value == 'pfeffer' else bid_value
+        if bid_winner in team1:
+            if tricks_won_team1 >= bidding_team_tricks_required:
+                score_team1 = 12 if bid_value == 'pfeffer' else tricks_won_team1
+            else:
+                score_team1 = -12 if bid_value == 'pfeffer' else -5
+            if tricks_won_team2 > 0:
+                score_team2 = tricks_won_team2
+            else:
+                score_team2 = -5
+        else:
+            if tricks_won_team1 > 0:
+                score_team1 = tricks_won_team2
+            else:
+                score_team1 = -5
+            if tricks_won_team2 >= bidding_team_tricks_required:
+                score_team2 = 12 if bid_value == 'pfeffer' else tricks_won_team1
+            else:
+                score_team2 = -12 if bid_value == 'pfeffer' else -5
+
+        return score_team1, score_team2
 
     def play_game(self):
         """Plays a full game."""
@@ -215,6 +295,7 @@ class Player:
             'all_bids': tf.TensorSpec(shape=(20,), dtype=tf.int32),
             'winning_bid_encoding': tf.TensorSpec(shape=(10,), dtype=tf.int32),
             'lead_players': tf.TensorSpec(shape=(24,), dtype=tf.int32),
+            'trick_winners': tf.TensorSpec(shape=(24,), dtype=tf.int32),
             'current_trick': tf.TensorSpec(shape=(6,), dtype=tf.int32),
             'score': tf.TensorSpec(shape=(2,), dtype=tf.int32),
         }
@@ -262,18 +343,17 @@ class Player:
 
         return bid, trump_suit
 
-    def make_play(self, game_state):
+    def make_play(self, play_input):
         """
         Makes a play by choosing a card using the Q-network.
 
         Args:
-            game_state (dict): The current state of the game.
+            play_input (PlayInput): The game state as known by the current player.
 
         Returns:
             action (str): The chosen action (card to play).
         """
         # Get current state of the game and encode it
-        play_input = PlayInput.from_game_state(self.player_id, game_state)
         state_vector = play_input.encode()
 
         # Get Q-values for the current state
@@ -283,9 +363,9 @@ class Player:
         mask = [1 if card in play_input.hand else 0 for card in self.play_actions.CARDS]
 
         # If it's not the first card in the trick, it must follow suit if possible
-        if game_state["played_cards"][-1]:
-            lead_suit = game_state["played_cards"][-1][0][1][-1]
-            trump_suit = game_state["winning_bid"][2]
+        if play_input.played_cards[-1]:
+            lead_suit = play_input.played_cards[-1][0][1][-1]
+            trump_suit = play_input.winning_bid[2]
 
             # Define the left bauer based on trump suit
             opposite_color_suits = {"black": ["S", "C"], "red": ["H", "D"]}
@@ -331,10 +411,9 @@ class Player:
         # Add the experience to the bid replay buffer
         self.bid_replay_buffer.add_batch(experience)
 
-    def save_to_play_buffer(self, play_input, action_taken, reward_received, next_play_input):
+    def save_to_play_buffer(self, play_input, action_taken, reward_received):
         # Encode the current and next playing states
         current_observation = play_input.encode()
-        next_observation = next_play_input.encode()
 
         # Create a trajectory with the experience
         experience = trajectory.Trajectory(
@@ -349,6 +428,7 @@ class Player:
 
         # Add the experience to the play replay buffer
         self.play_replay_buffer.add_batch(experience)
+
 
 class BiddingInput:
     """
@@ -655,7 +735,8 @@ class PlayInput:
         score (list): The current score for each team.
     """
 
-    def __init__(self, player_id, hand, played_cards, bidding_order, all_bids, winning_bid, lead_players, current_trick,
+    def __init__(self, player_id, hand, played_cards, bidding_order, all_bids, winning_bid, lead_players, trick_winners,
+                 current_trick,
                  score, ):
         self.player_id = player_id
         self.hand = hand
@@ -664,6 +745,7 @@ class PlayInput:
         self.all_bids = all_bids
         self.winning_bid = winning_bid
         self.lead_players = lead_players
+        self.trick_winners = trick_winners
         self.current_trick = current_trick
         self.score = score
 
@@ -854,12 +936,12 @@ class PlayInput:
         return bid_quantity, player, bid_suit
 
     @staticmethod
-    def encode_lead_players(lead_players):
+    def encode_list_of_players(players):
         """
         Encodes the players who led each trick into one-hot vectors.
 
         Args:
-            lead_players (list): The players who led each trick.
+            players (list): The players who led each trick.
 
         Returns:
             list: A 24-element one-hot encoding of the lead players.
@@ -867,13 +949,37 @@ class PlayInput:
         possible_players = [-1, 0, 1, 2, 3]  # Include -1 as a possible player for tricks that haven't happened yet
         lead_players_encoding = []
 
-        for player in lead_players:
+        for player in players:
             player = player if player is not None else -1  # Set player to -1 if it's None
             player_encoding = [0] * len(possible_players)
             player_encoding[possible_players.index(player)] = 1
             lead_players_encoding.append(player_encoding)
 
         return [item for sublist in lead_players_encoding for item in sublist]
+
+    @staticmethod
+    def decode_list_of_players(encoded_state, pointer):
+        """
+        Decodes an encoded list of players to an array of players.
+
+        Args:
+            encoded_state (np.array): The encoded state.
+            pointer (int): The current position in the encoded_state
+
+        Returns:
+            list: The decoded list of players
+            pointer (int): The new position after reading in the players
+        """
+        lead_players = []
+        for i in range(6):
+            player_encoded = encoded_state[pointer:pointer + 5]
+            player = PlayInput.decode_one_hot(player_encoded, [-1, 0, 1, 2, 3])
+            if player == -1:
+                player = None
+            lead_players.append(player)
+            pointer += 5
+
+        return lead_players, pointer
 
     @staticmethod
     def encode_current_trick(current_trick):
@@ -939,7 +1045,8 @@ class PlayInput:
 
         winning_bid_encoding = self.encode_winning_bid(self.winning_bid)
 
-        lead_players_encoding = self.encode_lead_players(self.lead_players)
+        lead_players_encoding = self.encode_list_of_players(self.lead_players)
+        trick_winners_encoding = self.encode_list_of_players(self.trick_winners)
 
         current_trick_encoding = self.encode_current_trick(self.current_trick)
 
@@ -953,10 +1060,33 @@ class PlayInput:
             all_bids_encoding,
             winning_bid_encoding,
             lead_players_encoding,
+            trick_winners_encoding,
             current_trick_encoding,
             score_encoding,
         ])
         return input_vector
+
+    @staticmethod
+    def decode_one_hot(one_hot_list, possible_values):
+        """
+        Decodes a one-hot encoded list.
+
+        Args:
+            one_hot_list (List[int]): One-hot encoded list.
+            possible_values (List[Any]): Possible values that can be represented by the one-hot encoding.
+
+        Returns:
+            Any: The value represented by the one-hot encoding, or None if the one-hot encoding is all zeros.
+        """
+        if isinstance(one_hot_list, np.ndarray):
+            one_hot_list = one_hot_list.tolist()
+
+        # If the one_hot_list is a vector of zeros, return None
+        if sum(one_hot_list) == 0:
+            return None
+
+        index = one_hot_list.index(1)
+        return possible_values[index]
 
     @classmethod
     def decode(cls, encoded_state):
@@ -970,31 +1100,10 @@ class PlayInput:
             PlayInput: The decoded PlayInput object.
         """
 
-        def decode_one_hot(one_hot_list, possible_values):
-            """
-            Decodes a one-hot encoded list.
-
-            Args:
-                one_hot_list (List[int]): One-hot encoded list.
-                possible_values (List[Any]): Possible values that can be represented by the one-hot encoding.
-
-            Returns:
-                Any: The value represented by the one-hot encoding, or None if the one-hot encoding is all zeros.
-            """
-            if isinstance(one_hot_list, np.ndarray):
-                one_hot_list = one_hot_list.tolist()
-
-            # If the one_hot_list is a vector of zeros, return None
-            if sum(one_hot_list) == 0:
-                return None
-
-            index = one_hot_list.index(1)
-            return possible_values[index]
-
         pointer = 0
 
         # Decode player_id
-        player_id = decode_one_hot(encoded_state[pointer:pointer + 4], [0, 1, 2, 3])
+        player_id = PlayInput.decode_one_hot(encoded_state[pointer:pointer + 4], [0, 1, 2, 3])
         pointer += 4
 
         # Decode hand
@@ -1011,7 +1120,7 @@ class PlayInput:
         bidding_order = []
         for i in range(4):
             player_encoded = encoded_state[pointer:pointer + 4]
-            player = decode_one_hot(player_encoded, [0, 1, 2, 3])
+            player = PlayInput.decode_one_hot(player_encoded, [0, 1, 2, 3])
             bidding_order.append(player)
             pointer += 4
 
@@ -1019,7 +1128,7 @@ class PlayInput:
         all_bids = []
         for i in range(4):
             bid_encoded = encoded_state[pointer:pointer + 5]
-            bid = decode_one_hot(bid_encoded, [0, 4, 5, 6, 'pfeffer'])
+            bid = PlayInput.decode_one_hot(bid_encoded, [0, 4, 5, 6, 'pfeffer'])
             all_bids.append(bid)
             pointer += 5
 
@@ -1029,25 +1138,21 @@ class PlayInput:
         pointer += 14
 
         # Decode lead_players
-        lead_players = []
-        for i in range(6):
-            player_encoded = encoded_state[pointer:pointer + 5]
-            player = decode_one_hot(player_encoded, [-1, 0, 1, 2, 3])
-            if player == -1:
-                player = None
-            lead_players.append(player)
-            pointer += 5
+        (lead_players, pointer) = PlayInput.decode_list_of_players(encoded_state, pointer)
+
+        # Decode trick_winners
+        (trick_winners, pointer) = PlayInput.decode_list_of_players(encoded_state, pointer)
 
         # Decode current_trick
         current_trick_encoded = encoded_state[pointer:pointer + 6]
-        current_trick = decode_one_hot(current_trick_encoded, [0, 1, 2, 3, 4, 5])
+        current_trick = PlayInput.decode_one_hot(current_trick_encoded, [0, 1, 2, 3, 4, 5])
         pointer += 6
 
         # Extract score
         score = list(encoded_state[pointer:pointer + 2])
 
-        return cls(player_id, hand, played_cards, bidding_order, all_bids, winning_bid, lead_players, current_trick,
-                   score)
+        return cls(player_id, hand, played_cards, bidding_order, all_bids, winning_bid, lead_players, trick_winners,
+                   current_trick, score)
 
     @classmethod
     def from_game_state(cls, player_id, game_state):
@@ -1059,13 +1164,14 @@ class PlayInput:
         all_bids = game_state["all_bids"]
         winning_bid = game_state["winning_bid"]
         lead_players = game_state["lead_players"]
+        trick_winners = game_state["trick_winners"]
         # current_trick = len(played_cards) - 1 if played_cards else 0
         current_trick = max(index for index, trick in enumerate(played_cards) if trick) if played_cards else 0
         score = game_state["score"]
 
         # Create a PlayInput object
         play_input = cls(player_id, hand, played_cards, bidding_order, all_bids, winning_bid, lead_players,
-                         current_trick, score)
+                         trick_winners, current_trick, score)
 
         return play_input
 

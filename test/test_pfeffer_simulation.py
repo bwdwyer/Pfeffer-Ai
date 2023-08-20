@@ -1,4 +1,5 @@
 from unittest import TestCase
+from unittest.mock import Mock
 
 from src.pfeffer_simulation import BiddingInput, Game, PlayInput
 
@@ -19,16 +20,19 @@ class TestGame(TestCase):
         game.game_state["played_cards"][0] = [('9S', 0), ('9H', 1), ('9D', 2), ('JC', 3)]
         game.game_state["all_bids"] = [4, 5, 0, 'pfeffer']
         game.game_state["winning_bid"] = ('pfeffer', 3, 'C')
+        game.game_state["lead_players"][0] = 0
+        game.game_state["trick_winners"][0] = 3
 
         # Call the reset method
         game.reset()
 
         # Verify that the game state has been reset
         assert [0, 0] == game.game_state["score"]
-        assert [None] * 6 == game.game_state["lead_players"]
         assert all(len(trick) == 0 for trick in game.game_state["played_cards"])
         assert [] == game.game_state["all_bids"]
         assert (-1, -1, None) == game.game_state["winning_bid"]
+        assert [None] * 6 == game.game_state["lead_players"], game.game_state["lead_players"]
+        assert [None] * 6 == game.game_state["trick_winners"], game.game_state["trick_winners"]
 
         # Verify that the hands have been reset (if you want to test this, you may need additional logic)
         for player in game.players:
@@ -47,6 +51,8 @@ class TestGame(TestCase):
         game.game_state["played_cards"][0] = [('9S', 0), ('9H', 1), ('9D', 2), ('JC', 3)]
         game.game_state["all_bids"] = [4, 5, 0, 'pfeffer']
         game.game_state["winning_bid"] = ('pfeffer', 3, 'C')
+        game.game_state["lead_players"][0] = 0
+        game.game_state["trick_winners"][0] = 3
 
         # Store the original score to verify that it doesn't change
         original_score = game.game_state["score"].copy()
@@ -55,10 +61,11 @@ class TestGame(TestCase):
         game.reset_round()
 
         # Verify that round-specific state has been reset
-        assert [None] * 6 == game.game_state["lead_players"]
         assert all(len(trick) == 0 for trick in game.game_state["played_cards"])
         assert [] == game.game_state["all_bids"]
         assert (-1, -1, None) == game.game_state["winning_bid"]
+        assert [None] * 6 == game.game_state["lead_players"], game.game_state["lead_players"]
+        assert [None] * 6 == game.game_state["trick_winners"], game.game_state["trick_winners"]
 
         # Verify that the score has not been changed
         assert original_score == game.game_state["score"]
@@ -66,6 +73,61 @@ class TestGame(TestCase):
         # Verify that the hands have been reset (if you want to test this, you may need additional logic)
         for player in game.players:
             assert 6 == len(player.hand)
+
+    def test_evaluate_round_4bid_4_2(self):
+        game = Game(Mock(), Mock())
+
+        game.game_state["winning_bid"] = (4, 0, 'C')
+        game.game_state["trick_winners"] = [0, 1, 2, 3, 0, 2]
+
+        score_team1, score_team2 = game.evaluate_round()
+
+        self.assertEqual(4, score_team1)
+        self.assertEqual(2, score_team2)
+
+    def test_evaluate_round_4bid_6_0(self):
+        game = Game(Mock(), Mock())
+
+        game.game_state["winning_bid"] = (4, 0, 'C')
+        game.game_state["trick_winners"] = [0, 2, 0, 2, 0, 2]
+
+        score_team1, score_team2 = game.evaluate_round()
+
+        self.assertEqual(6, score_team1)
+        self.assertEqual(-5, score_team2)
+
+    def test_evaluate_round_4bid_3_3(self):
+        game = Game(Mock(), Mock())
+
+        game.game_state["winning_bid"] = (4, 0, 'C')
+        game.game_state["trick_winners"] = [0, 2, 0, 1, 1, 3]
+
+        score_team1, score_team2 = game.evaluate_round()
+
+        self.assertEqual(-5, score_team1)
+        self.assertEqual(3, score_team2)
+
+    def test_evaluate_round_pfeffer_bid_6_0(self):
+        game = Game(Mock(), Mock())
+
+        game.game_state["winning_bid"] = ('pfeffer', 0, 'C')
+        game.game_state["trick_winners"] = [0, 0, 0, 0, 0, 0]
+
+        score_team1, score_team2 = game.evaluate_round()
+
+        self.assertEqual(12, score_team1)
+        self.assertEqual(-5, score_team2)
+
+    def test_evaluate_round_pfeffer_bid_5_1(self):
+        game = Game(Mock(), Mock())
+
+        game.game_state["winning_bid"] = ('pfeffer', 0, 'C')
+        game.game_state["trick_winners"] = [0, 0, 0, 0, 0, 1]
+
+        score_team1, score_team2 = game.evaluate_round()
+
+        self.assertEqual(-12, score_team1)
+        self.assertEqual(1, score_team2)
 
 
 class TestBiddingInput(TestCase):
@@ -143,6 +205,7 @@ class TestPlayInput(TestCase):
             "all_bids": [4, 5, 0, 'pfeffer'],
             "winning_bid": ('pfeffer', 3, 'C'),
             "lead_players": [0, 3, None, None, None, None],
+            "trick_winners": [3, None, None, None, None, None],
             "score": [12, -5]
         }
 

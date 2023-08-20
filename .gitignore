@@ -163,3 +163,5 @@ cython_debug/
 /.idea/Pfeffer-Ai.iml
 /.idea/inspectionProfiles/profiles_settings.xml
 /.idea/vcs.xml
+
+/TODO.md
