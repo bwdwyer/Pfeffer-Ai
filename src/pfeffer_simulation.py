@@ -9,6 +9,13 @@ from tf_agents.trajectories import trajectory
 
 SUITS_COLORS = {"S": "black", "C": "black", "H": "red", "D": "red"}
 
+CARDS = [
+    '9S', 'TS', 'JS', 'QS', 'KS', 'AS',
+    '9H', 'TH', 'JH', 'QH', 'KH', 'AH',
+    '9D', 'TD', 'JD', 'QD', 'KD', 'AD',
+    '9C', 'TC', 'JC', 'QC', 'KC', 'AC'
+]
+
 
 class Game:
 
@@ -21,7 +28,7 @@ class Game:
         self.game_state = {
             "hands": {player.player_id: [] for player in self.players},  # Empty hands at the start
             "score": [0, 0],  # Score starts at 0 for each team
-            "current_trick": [],  # No tricks have been played
+            "current_trick": 0,  # No tricks have been played
             "played_cards": [[] for _ in range(6)],  # List of played cards for each trick
             "bidding_order": [0, 1, 2, 3],  # Bidding order might be fixed, or determined by some rule
             "all_bids": [],  # No bids have been made
@@ -51,7 +58,7 @@ class Game:
             player.hand = deck[i * 6: (i + 1) * 6]
 
         # Reset current trick
-        self.game_state["current_trick"] = []
+        self.game_state["current_trick"] = 0
 
         # Reset played cards
         self.game_state["played_cards"] = [[] for _ in range(6)]
@@ -118,9 +125,11 @@ class Game:
         while play_order[0] != bid_winner:
             play_order.append(play_order.pop(0))
 
-        experiences = np.zeros((4, 6, 2))
+        # Creates a 4x6x2 matrix to store the input and action for each experience
+        experiences = [[[PlayInput, None] for _ in range(6)] for _ in range(4)]
 
         for trick in range(6):  # 6 tricks in a round
+            self.game_state["current_trick"] = trick
             for player_id in play_order:
                 # Skip the partner's turn if the bid winner is playing alone
                 if playing_alone and player_id == partner_id:
@@ -172,8 +181,10 @@ class Game:
         Returns:
             int: player_id of the winner.
         """
-        trick = self.game_state["played_cards"][-1]  # Last trick
-        lead_suit = trick[0][1][-1]  # Suit of the first card played in the trick
+        current_trick = self.game_state["current_trick"]
+        cards_played_in_last_trick = self.game_state["played_cards"][current_trick]
+        lead_suit = cards_played_in_last_trick[0][1][-1]  # Suit of the first card played in the trick
+
         trump_suit = self.game_state["winning_bid"][2]
 
         # Define the left bauer based on trump suit
@@ -198,7 +209,7 @@ class Game:
                 return -1  # Cards not following the lead and not trump are ranked lowest
 
         # Find the highest card played in the trick
-        winning_card = max(trick, key=lambda x: card_value(x[1]))
+        winning_card = max(cards_played_in_last_trick, key=lambda x: card_value(x[1]))
 
         # Return the player_id of the winner
         return winning_card[0]
@@ -288,14 +299,14 @@ class Player:
 
         # Create play data spec
         play_state_spec = {
-            'player_id': tf.TensorSpec(shape=(4,), dtype=tf.float32),
-            'hand': tf.TensorSpec(shape=(24,), dtype=tf.float32),
+            'player_id': tf.TensorSpec(shape=(4,), dtype=tf.int32),
+            'hand': tf.TensorSpec(shape=(24,), dtype=tf.int32),
             'played_cards': tf.TensorSpec(shape=(6 * 4 * 24,), dtype=tf.int32),
-            'bidding_order': tf.TensorSpec(shape=(16,), dtype=tf.int32),
+            'bidding_order': tf.TensorSpec(shape=(4, 4), dtype=tf.int32),
             'all_bids': tf.TensorSpec(shape=(20,), dtype=tf.int32),
-            'winning_bid_encoding': tf.TensorSpec(shape=(10,), dtype=tf.int32),
-            'lead_players': tf.TensorSpec(shape=(24,), dtype=tf.int32),
-            'trick_winners': tf.TensorSpec(shape=(24,), dtype=tf.int32),
+            'winning_bid_encoding': tf.TensorSpec(shape=(14,), dtype=tf.int32),
+            'lead_players': tf.TensorSpec(shape=(30,), dtype=tf.int32),
+            'trick_winners': tf.TensorSpec(shape=(30,), dtype=tf.int32),
             'current_trick': tf.TensorSpec(shape=(6,), dtype=tf.int32),
             'score': tf.TensorSpec(shape=(2,), dtype=tf.int32),
         }
@@ -351,16 +362,17 @@ class Player:
             play_input (PlayInput): The game state as known by the current player.
 
         Returns:
-            action (str): The chosen action (card to play).
+            action (PlayInput): The chosen action (card to play).
         """
         # Get current state of the game and encode it
         state_vector = play_input.encode()
 
         # Get Q-values for the current state
-        q_values = self.play_model.predict(state_vector[None, :], verbose=0)[0]
+        # q_values = self.play_model.predict(state_vector[None, :], verbose=0)[0]
+        q_values = self.play_model.predict(x=state_vector, verbose=0)
 
         # Mask out illegal actions (cards not in hand)
-        mask = [1 if card in play_input.hand else 0 for card in self.play_actions.CARDS]
+        mask = [1 if card in play_input.hand else 0 for card in CARDS]
 
         # If it's not the first card in the trick, it must follow suit if possible
         if play_input.played_cards[-1]:
@@ -375,7 +387,7 @@ class Player:
 
             # Modify mask for lead suit, right bauer, and left bauer
             mask_suit = []
-            for card in self.play_actions.CARDS:
+            for card in CARDS:
                 if card[-1] == lead_suit or card == right_bauer or card == left_bauer:
                     mask_suit.append(1 if card in play_input.hand else 0)
                 else:
@@ -413,17 +425,21 @@ class Player:
 
     def save_to_play_buffer(self, play_input, action_taken, reward_received):
         # Encode the current and next playing states
-        current_observation = play_input.encode()
+        play_input_encoded = play_input.encode()
+        action_taken_encoded = PlayActions.get_index(action_taken)
+
+        step_type = [0, 1, 1, 1, 1, 2][play_input.current_trick]
+        next_step_type = [1, 1, 1, 1, 2, 0][play_input.current_trick]
 
         # Create a trajectory with the experience
         experience = trajectory.Trajectory(
-            step_type=tf.constant([0], dtype=tf.int32),  # Adjust step_type as needed
-            observation=current_observation,
-            action=action_taken,
+            step_type=tf.expand_dims(tf.constant(step_type, dtype=tf.int32), axis=0),
+            observation={key: tf.expand_dims(tf.constant(value), axis=0) for key, value in play_input_encoded.items()},
+            action=tf.expand_dims(tf.constant(action_taken_encoded, dtype=tf.int32), axis=0),
             policy_info=(),
-            next_step_type=tf.constant([0], dtype=tf.int32),  # Adjust next_step_type as needed
-            reward=tf.constant([reward_received], dtype=tf.float32),
-            discount=tf.constant([1.0], dtype=tf.float32),  # Adjust discount factor as needed
+            next_step_type=tf.expand_dims(tf.constant(next_step_type, dtype=tf.int32), axis=0),
+            reward=tf.expand_dims(tf.constant(reward_received, dtype=tf.float32), axis=0),
+            discount=tf.expand_dims(tf.constant(1.0, dtype=tf.float32), axis=0),
         )
 
         # Add the experience to the play replay buffer
@@ -736,8 +752,7 @@ class PlayInput:
     """
 
     def __init__(self, player_id, hand, played_cards, bidding_order, all_bids, winning_bid, lead_players, trick_winners,
-                 current_trick,
-                 score, ):
+                 current_trick, score, ):
         self.player_id = player_id
         self.hand = hand
         self.played_cards = played_cards
@@ -770,27 +785,24 @@ class PlayInput:
         return encoding
 
     @staticmethod
-    def decode_card(encoded_card: Union[np.ndarray, List[int]]):
+    def decode_card(encoded_card: tf.Tensor):
         """
         Decodes a one-hot encoded card back to its string representation.
 
         Args:
-            encoded_card (Union[np.ndarray, List[int]]): A 24-element one-hot encoding of the card.
+            encoded_card (tf.Tensor): A 24-element one-hot encoding of the card.
 
         Returns:
             str: The decoded card in string format or None if the encoding is all zeros.
         """
         # If the encoded card is a vector of zeros, return None
-        if sum(encoded_card) == 0:
+        if tf.reduce_sum(encoded_card) == 0:
             return None
 
         possible_ranks = ['9', 'T', 'J', 'Q', 'K', 'A']
         possible_suits = ['S', 'H', 'D', 'C']
 
-        if isinstance(encoded_card, np.ndarray):
-            encoded_card = encoded_card.tolist()  # Convert numpy ndarray to list
-
-        index = encoded_card.index(1)
+        index = tf.argmax(encoded_card).numpy()
         rank = possible_ranks[index // 4]
         suit = possible_suits[index % 4]
 
@@ -824,7 +836,7 @@ class PlayInput:
         Decodes a one-hot encoded list of played cards.
 
         Args:
-            encoded_cards (ndarray): A one-hot encoding of the played cards.
+            encoded_cards (tf.Tensor): A one-hot encoding of the played cards.
 
         Returns:
             list: The decoded played cards, organized by trick.
@@ -834,7 +846,7 @@ class PlayInput:
             trick = []
             for j in range(4):  # for each player
                 card_encoded = encoded_cards[i * 4 * 24 + j * 24: i * 4 * 24 + (j + 1) * 24]
-                card = PlayInput.decode_card(card_encoded)
+                card = PlayInput.decode_card(tf.cast(card_encoded, tf.int32))
                 if card:
                     trick.append((card, j))
             played_cards.append(trick)
@@ -846,7 +858,7 @@ class PlayInput:
         Decodes a one-hot encoded hand back to its card representations.
 
         Args:
-            encoded_hand (ndarray): A 24-element one-hot encoding of the hand.
+            encoded_hand (tf.Tensor): A 24-element one-hot encoding of the hand.
 
         Returns:
             list: The decoded cards in the hand.
@@ -854,8 +866,7 @@ class PlayInput:
         hand = []
         for i in range(24):  # Iterate over each possible card
             if encoded_hand[i] == 1:
-                card_encoding = [0] * 24  # Initialize a blank encoding
-                card_encoding[i] = 1  # Set the corresponding bit for the card
+                card_encoding = tf.one_hot(i, 24)  # Create one-hot encoding for the card
                 card = PlayInput.decode_card(card_encoding)
                 hand.append(card)
         return hand
@@ -912,26 +923,26 @@ class PlayInput:
         Decodes a one-hot encoded bid back to its original form.
 
         Args:
-            encoded_bid (ndarray): A one-hot encoding of the bid.
+            encoded_bid (tf.Tensor): A one-hot encoding of the bid.
 
         Returns:
             tuple: The decoded bid in the form (quantity, player, suit) or None if the encoding is all zeros.
         """
         # If the encoded bid is a vector of zeros, return None
-        if sum(encoded_bid) == 0:
+        if tf.reduce_sum(encoded_bid) == 0:
             return None
 
         possible_bids = [0, 4, 5, 6, 'pfeffer']
         possible_players = [0, 1, 2, 3]
         possible_suits = ['S', 'H', 'D', 'C', 'no-trump']
 
-        bid_encoded = encoded_bid[:5].tolist()  # Convert numpy ndarray to list
-        player_encoded = encoded_bid[5:9].tolist()  # Convert numpy ndarray to list
-        suit_encoded = encoded_bid[9:].tolist()  # Convert numpy ndarray to list
+        bid_encoded = encoded_bid[:5]
+        player_encoded = encoded_bid[5:9]
+        suit_encoded = encoded_bid[9:]
 
-        bid_quantity = possible_bids[bid_encoded.index(1)]
-        player = possible_players[player_encoded.index(1)]
-        bid_suit = possible_suits[suit_encoded.index(1)]
+        bid_quantity = possible_bids[tf.argmax(bid_encoded).numpy()]
+        player = possible_players[tf.argmax(player_encoded).numpy()]
+        bid_suit = possible_suits[tf.argmax(suit_encoded).numpy()]
 
         return bid_quantity, player, bid_suit
 
@@ -958,28 +969,25 @@ class PlayInput:
         return [item for sublist in lead_players_encoding for item in sublist]
 
     @staticmethod
-    def decode_list_of_players(encoded_state, pointer):
+    def decode_list_of_players(encoded_players):
         """
-        Decodes an encoded list of players to an array of players.
+        Decodes an encoded tensor of players to a list of players.
 
         Args:
-            encoded_state (np.array): The encoded state.
-            pointer (int): The current position in the encoded_state
+            encoded_players (tf.Tensor): An encoded tensor of players.
 
         Returns:
-            list: The decoded list of players
-            pointer (int): The new position after reading in the players
+            list: The decoded list of players.
         """
         lead_players = []
         for i in range(6):
-            player_encoded = encoded_state[pointer:pointer + 5]
+            player_encoded = encoded_players[i * 5:i * 5 + 5]
             player = PlayInput.decode_one_hot(player_encoded, [-1, 0, 1, 2, 3])
             if player == -1:
                 player = None
             lead_players.append(player)
-            pointer += 5
 
-        return lead_players, pointer
+        return lead_players
 
     @staticmethod
     def encode_current_trick(current_trick):
@@ -1007,7 +1015,7 @@ class PlayInput:
             bidding_order (list): The bidding order.
 
         Returns:
-            list: A 16-element one-hot encoding of the bidding order.
+            list: A list of 4-element one-hot encodings of the bidding order.
         """
         possible_players = [0, 1, 2, 3]
         bidding_order_encoding = []
@@ -1017,14 +1025,14 @@ class PlayInput:
             player_encoding[possible_players.index(player)] = 1
             bidding_order_encoding.append(player_encoding)
 
-        return [item for sublist in bidding_order_encoding for item in sublist]
+        return bidding_order_encoding  # Returning a list of lists instead of a flattened list
 
     def encode(self):
         """
-        Encodes the state into a single vector.
+        Encodes the state into a dictionary of lists.
 
         Returns:
-            np.array: A single vector representing the encoded state.
+            dict: A dictionary representing the encoded state.
         """
         player_id_encoding = [0] * 4
         player_id_encoding[self.player_id] = 1
@@ -1034,58 +1042,52 @@ class PlayInput:
             card_one_hot = self.encode_card(card)
             hand_encoding = [x or y for x, y in zip(hand_encoding, card_one_hot)]
 
-        # played_cards_encoding = [self.encode_card(card[0]) for trick in self.played_cards for card in trick]
-        # played_cards_encoding = [item for sublist in played_cards_encoding for item in sublist]
         played_cards_encoding = self.encode_played_cards(self.played_cards)
-
         bidding_order_encoding = self.encode_bidding_order(self.bidding_order)
 
         all_bids_encoding = [self.encode_bid(bid) for bid in self.all_bids]
         all_bids_encoding = [item for sublist in all_bids_encoding for item in sublist]
 
         winning_bid_encoding = self.encode_winning_bid(self.winning_bid)
-
         lead_players_encoding = self.encode_list_of_players(self.lead_players)
         trick_winners_encoding = self.encode_list_of_players(self.trick_winners)
-
         current_trick_encoding = self.encode_current_trick(self.current_trick)
 
         score_encoding = self.score
 
-        input_vector = np.concatenate([
-            player_id_encoding,
-            hand_encoding,
-            played_cards_encoding,
-            bidding_order_encoding,
-            all_bids_encoding,
-            winning_bid_encoding,
-            lead_players_encoding,
-            trick_winners_encoding,
-            current_trick_encoding,
-            score_encoding,
-        ])
-        return input_vector
+        return {
+            'player_id': tf.constant(player_id_encoding, dtype=tf.int32),
+            'hand': tf.constant(hand_encoding, dtype=tf.int32),
+            'played_cards': tf.constant(played_cards_encoding, dtype=tf.int32),
+            'bidding_order': tf.constant(bidding_order_encoding, dtype=tf.int32),
+            'all_bids': tf.constant(all_bids_encoding, dtype=tf.int32),
+            'winning_bid_encoding': tf.constant(winning_bid_encoding, dtype=tf.int32),
+            'lead_players': tf.constant(lead_players_encoding, dtype=tf.int32),
+            'trick_winners': tf.constant(trick_winners_encoding, dtype=tf.int32),
+            'current_trick': tf.constant(current_trick_encoding, dtype=tf.int32),
+            'score': tf.constant(score_encoding, dtype=tf.int32),
+        }
 
     @staticmethod
-    def decode_one_hot(one_hot_list, possible_values):
+    def decode_one_hot(one_hot_tensor, possible_values):
         """
-        Decodes a one-hot encoded list.
+        Decodes a one-hot encoded tensor.
 
         Args:
-            one_hot_list (List[int]): One-hot encoded list.
+            one_hot_tensor (tf.Tensor): One-hot encoded tensor of shape [n], where n is the number of possible values.
             possible_values (List[Any]): Possible values that can be represented by the one-hot encoding.
 
         Returns:
             Any: The value represented by the one-hot encoding, or None if the one-hot encoding is all zeros.
         """
-        if isinstance(one_hot_list, np.ndarray):
-            one_hot_list = one_hot_list.tolist()
 
-        # If the one_hot_list is a vector of zeros, return None
-        if sum(one_hot_list) == 0:
+        # Check if the tensor is all zeros
+        if tf.reduce_sum(one_hot_tensor) == 0:
             return None
 
-        index = one_hot_list.index(1)
+        # Find the index of the '1' in the one-hot tensor
+        index = tf.argmax(one_hot_tensor, axis=0).numpy()
+
         return possible_values[index]
 
     @classmethod
@@ -1094,62 +1096,46 @@ class PlayInput:
         Decodes an encoded state back to a PlayInput object.
 
         Args:
-            encoded_state (np.array): The encoded state.
+            encoded_state (dict): The encoded state.
 
         Returns:
             PlayInput: The decoded PlayInput object.
         """
-
-        pointer = 0
-
         # Decode player_id
-        player_id = PlayInput.decode_one_hot(encoded_state[pointer:pointer + 4], [0, 1, 2, 3])
-        pointer += 4
+        player_id = PlayInput.decode_one_hot(encoded_state['player_id'], [0, 1, 2, 3])
 
         # Decode hand
-        card_encoded = encoded_state[pointer:pointer + 24]
-        hand = PlayInput.decode_hand(card_encoded)
-        pointer += 24
+        hand = PlayInput.decode_hand(encoded_state['hand'])
 
         # Decode played_cards
-        played_cards_encoded = encoded_state[pointer:pointer + 24 * 6 * 4]
-        played_cards = PlayInput.decode_played_cards(played_cards_encoded)
-        pointer += 24 * 6 * 4
+        played_cards = PlayInput.decode_played_cards(encoded_state['played_cards'])
 
         # Decode bidding_order
-        bidding_order = []
-        for i in range(4):
-            player_encoded = encoded_state[pointer:pointer + 4]
-            player = PlayInput.decode_one_hot(player_encoded, [0, 1, 2, 3])
-            bidding_order.append(player)
-            pointer += 4
+        bidding_order = [PlayInput.decode_one_hot(player_encoded, [0, 1, 2, 3]) for player_encoded in
+                         encoded_state['bidding_order']]
 
         # Decode all_bids
-        all_bids = []
-        for i in range(4):
-            bid_encoded = encoded_state[pointer:pointer + 5]
-            bid = PlayInput.decode_one_hot(bid_encoded, [0, 4, 5, 6, 'pfeffer'])
-            all_bids.append(bid)
-            pointer += 5
+        all_bids = [
+            PlayInput.decode_one_hot(
+                encoded_state['all_bids'][i:i + 5],
+                [0, 4, 5, 6, 'pfeffer']
+            ) for i in range(0, len(encoded_state['all_bids']), 5)
+        ]
 
         # Decode winning_bid
-        winning_bid_encoded = encoded_state[pointer:pointer + 14]
-        winning_bid = PlayInput.decode_winning_bid(winning_bid_encoded)
-        pointer += 14
+        winning_bid = PlayInput.decode_winning_bid(encoded_state['winning_bid_encoding'])
 
         # Decode lead_players
-        (lead_players, pointer) = PlayInput.decode_list_of_players(encoded_state, pointer)
+        lead_players = PlayInput.decode_list_of_players(encoded_state['lead_players'])
 
         # Decode trick_winners
-        (trick_winners, pointer) = PlayInput.decode_list_of_players(encoded_state, pointer)
+        trick_winners = PlayInput.decode_list_of_players(encoded_state['trick_winners'])
 
         # Decode current_trick
-        current_trick_encoded = encoded_state[pointer:pointer + 6]
-        current_trick = PlayInput.decode_one_hot(current_trick_encoded, [0, 1, 2, 3, 4, 5])
-        pointer += 6
+        current_trick = PlayInput.decode_one_hot(encoded_state['current_trick'], [0, 1, 2, 3, 4, 5])
 
         # Extract score
-        score = list(encoded_state[pointer:pointer + 2])
+        score = list(encoded_state['score'])
 
         return cls(player_id, hand, played_cards, bidding_order, all_bids, winning_bid, lead_players, trick_winners,
                    current_trick, score)
@@ -1165,8 +1151,8 @@ class PlayInput:
         winning_bid = game_state["winning_bid"]
         lead_players = game_state["lead_players"]
         trick_winners = game_state["trick_winners"]
-        # current_trick = len(played_cards) - 1 if played_cards else 0
-        current_trick = max(index for index, trick in enumerate(played_cards) if trick) if played_cards else 0
+        current_trick = max((index for index, trick in enumerate(played_cards) if trick), default=0) \
+            if played_cards else 0
         score = game_state["score"]
 
         # Create a PlayInput object
@@ -1179,19 +1165,10 @@ class PlayInput:
 class PlayActions:
     """
     Represents the possible play actions in Pfeffer.
-
-    Attributes:
-        CARDS (list): List of possible cards a player can have.
     """
 
-    CARDS = [
-        '9S', 'TS', 'JS', 'QS', 'KS', 'AS',
-        '9H', 'TH', 'JH', 'QH', 'KH', 'AH',
-        '9D', 'TD', 'JD', 'QD', 'KD', 'AD',
-        '9C', 'TC', 'JC', 'QC', 'KC', 'AC'
-    ]
-
-    def get_action(self, index):
+    @staticmethod
+    def get_action(index):
         """
         Get the card action based on the given index.
 
@@ -1201,9 +1178,10 @@ class PlayActions:
         Returns:
             str: The card represented by the given index.
         """
-        return self.CARDS[index]
+        return CARDS[index]
 
-    def get_index(self, action):
+    @staticmethod
+    def get_index(action):
         """
         Get the index of a given card action.
 
@@ -1213,13 +1191,14 @@ class PlayActions:
         Returns:
             int: The index of the card in the list of cards.
         """
-        return self.CARDS.index(action)
+        return CARDS.index(action)
 
-    def get_number_of_actions(self):
+    @staticmethod
+    def get_number_of_actions():
         """
         Get the total number of possible card actions.
 
         Returns:
             int: The number of possible card actions.
         """
-        return len(self.CARDS)
+        return len(CARDS)

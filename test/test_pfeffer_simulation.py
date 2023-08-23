@@ -1,6 +1,8 @@
 from unittest import TestCase
 from unittest.mock import Mock
 
+import numpy as np
+
 from src.pfeffer_simulation import BiddingInput, Game, PlayInput
 
 
@@ -128,6 +130,25 @@ class TestGame(TestCase):
 
         self.assertEqual(-12, score_team1)
         self.assertEqual(1, score_team2)
+
+    def test_play_round(self):
+        bid_model = Mock()
+        play_model = Mock()
+        play_model.predict.return_value = np.zeros(24)
+
+        game = Game(bid_model, play_model)
+        game.reset()
+        game.game_state["winning_bid"] = (4, 0, 'C')
+        game.game_state["all_bids"] = [4, 0, 0, 0]
+
+        game.play_round()
+
+        # Each player should have 6 experiences
+        for i, player in enumerate(game.players):
+            self.assertEqual(6, player.play_replay_buffer.num_frames())
+            # trajectories, _ = player.play_replay_buffer.get_next(sample_batch_size=6)
+            trajectories, _ = player.play_replay_buffer.get_next()
+            print(trajectories.observation)
 
 
 class TestBiddingInput(TestCase):
