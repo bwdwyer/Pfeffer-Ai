@@ -1,5 +1,5 @@
 import random
-from typing import List, Union
+from typing import List
 
 import numpy as np
 import tensorflow as tf
@@ -16,11 +16,14 @@ CARDS = [
     '9C', 'TC', 'JC', 'QC', 'KC', 'AC'
 ]
 
+BID_VALUES = [0, 4, 5, 6, 'pfeffer']
+BID_SUITS = ['S', 'H', 'D', 'C', 'NT']  # NT represents No-Trump
+
 
 class Game:
 
     def __init__(self, bid_model, play_model):
-        self.bid_actions = BiddingActions()
+        self.bid_actions = BidActions()
         self.play_actions = PlayActions()
 
         self.players = [Player(i, bid_model, play_model, self.bid_actions, self.play_actions) for i in range(4)]
@@ -35,7 +38,12 @@ class Game:
             "winning_bid": (-1, -1, None),  # No winning bid yet, (bid, player_id, trump_suit)
             "lead_players": [None] * 6,  # No lead players yet
             "trick_winners": [None] * 6,
+            "dealer_position": 0,
         }
+
+        self.bid_experiences_cache = [[BidInput, None] for _ in range(4)]
+        # Creates a 4x6x2 matrix to store the input and action for each experience
+        self.play_experiences_cache = [[[PlayInput, None] for _ in range(6)] for _ in range(4)]
 
     def reset(self):
         """Resets the game to the initial state."""
@@ -73,30 +81,31 @@ class Game:
         # Reset trick winners
         self.game_state["trick_winners"] = [None] * 6
 
-    def step(self, player, action):
-        """Executes a player's action and updates the game state."""
-        # Update game state based on action
-        pass
+        dp = self.game_state["dealer_position"]
+        self.game_state["dealer_position"] = 0 if dp >= 3 else dp + 1
+
+        # Reset experience caches
+        self.bid_experiences_cache = [[BidInput, None] for _ in range(4)]
+        self.play_experiences_cache = [[[PlayInput, None] for _ in range(6)] for _ in range(4)]
 
     def bid_round(self):
         """Conducts the bidding round of the game."""
-        for player in self.players:
-            # Get bid from player
-            bid, trump_suit = player.make_bid(self.game_state)
+        for player_id, player in enumerate(self.players):
+            bid_input = BidInput.from_game_state(player_id, self.game_state)
 
-            #  Save the experience to the replay buffer
-            # observation = ... # Define the current observation for bidding
-            # action = bid
-            # reward = ... # Define the reward for this bid
-            # next_observation = ... # Define the next observation for bidding
-            # player.save_bid_experience(observation, action, reward, next_observation)
+            # Get bid from player
+            bid, trump_suit = player.make_bid(bid_input)
 
             # Update game state with bid
             self.game_state["all_bids"].append(bid)
 
             # Check if this bid is higher than the current winning bid
             if bid > self.game_state["winning_bid"][0]:
-                self.game_state["winning_bid"] = (bid, player.player_id, trump_suit)
+                self.game_state["winning_bid"] = (bid, player_id, trump_suit)
+
+            # Save experience to cache
+            self.bid_experiences_cache[player_id][0] = bid_input
+            self.bid_experiences_cache[player_id][1] = (bid, trump_suit)
 
     @staticmethod
     def generate_player_order(start_player):
@@ -125,9 +134,6 @@ class Game:
         while play_order[0] != bid_winner:
             play_order.append(play_order.pop(0))
 
-        # Creates a 4x6x2 matrix to store the input and action for each experience
-        experiences = [[[PlayInput, None] for _ in range(6)] for _ in range(4)]
-
         for trick in range(6):  # 6 tricks in a round
             self.game_state["current_trick"] = trick
             for player_id in play_order:
@@ -142,8 +148,8 @@ class Game:
                 # Ask the player to make a play
                 play = self.players[player_id].make_play(play_input)
 
-                experiences[player_id][trick][0] = play_input
-                experiences[player_id][trick][1] = play
+                self.play_experiences_cache[player_id][trick][0] = play_input
+                self.play_experiences_cache[player_id][trick][1] = play
 
                 # Update the game state with the play
                 self.game_state["played_cards"][trick].append((player_id, play))
@@ -164,13 +170,22 @@ class Game:
         self.game_state["score"][0] += score_team1
         self.game_state["score"][1] += score_team2
 
-        # Save results to replay buffer
+        # Save results to bid_buffer
+        for player_id in play_order:
+            reward = score_team1 - score_team2 if player_id in [0, 2] else -(score_team1 - score_team2)
+            self.players[player_id].save_to_bid_buffer(
+                bid_input=self.bid_experiences_cache[player_id][0],
+                action_taken=self.bid_experiences_cache[player_id][1],
+                reward_received=reward
+            )
+
+        # Save results to play_buffer
         for trick in range(6):
             for player_id in play_order:
                 reward = score_team1 - score_team2 if player_id in [0, 2] else -(score_team1 - score_team2)
                 self.players[player_id].save_to_play_buffer(
-                    play_input=experiences[player_id][trick][0],
-                    action_taken=experiences[player_id][trick][1],
+                    play_input=self.play_experiences_cache[player_id][trick][0],
+                    action_taken=self.play_experiences_cache[player_id][trick][1],
                     reward_received=reward
                 )
 
@@ -272,11 +287,11 @@ class Game:
 
 
 class Player:
-    def __init__(self, player_id, bidding_model, play_model, bidding_actions, play_actions):
+    def __init__(self, player_id, bidding_model, play_model, bid_actions, play_actions):
         self.player_id = player_id
         self.bidding_model = bidding_model
         self.play_model = play_model
-        self.bidding_actions = bidding_actions
+        self.bid_actions = bid_actions
         self.play_actions = play_actions
 
         # Create bid data spec
@@ -286,7 +301,7 @@ class Player:
             'score': tf.TensorSpec(shape=(2,), dtype=tf.int32),
             'previous_bids': tf.TensorSpec(shape=(15,), dtype=tf.int32),
         }
-        bid_action_spec = tensor_spec.BoundedTensorSpec(shape=(), dtype=tf.int32, minimum=0, maximum=4)
+        bid_action_spec = tensor_spec.BoundedTensorSpec(shape=(2,), dtype=tf.int32, minimum=0, maximum=4)
         bid_data_spec = trajectory.Trajectory(
             observation=bid_state_spec,
             action=bid_action_spec,
@@ -330,29 +345,40 @@ class Player:
             play_data_spec, batch_size=1, max_length=max_length
         )
 
-    def make_bid(self, game_state):
-        """Makes a bid and chooses a trump suit based on the current game state."""
-        # Create a BiddingInput object from the game state
-        bidding_input = BiddingInput.from_game_state(self.player_id, game_state)
+    def make_bid(self, bid_input):
+        """
+        Makes a bid and chooses a trump suit based on the current game state.
+
+        Args:
+            bid_input (BidInput): The game state as known by the current player.
+
+        Returns:
+            tuple: The chosen bid and trump suit.
+        """
+
+        # Get the encoded state as a dictionary
+        encoded_state = bid_input.encode()
 
         # Get the Q-values from the bidding model
-        q_values = self.bidding_model.predict(bidding_input.encode()[tf.newaxis, :])
+        q_values = self.bidding_model.predict(encoded_state)
 
-        # Get the highest previous bid
-        highest_previous_bid = max(game_state["all_bids"])
+        # Create a mask based on the highest previous bid
+        highest_previous_bid = max(bid_input.previous_bids, default=0)
+        mask = np.ones(11)  # 11 is the total number of actions (6 bids + 5 suits)
+        mask[1:highest_previous_bid + 1] = 0  # Mask out illegal bids
 
-        # Modify Q-values for bids that are not greater than the highest previous bid and are not 0
-        q_values[0][1:highest_previous_bid + 1] = -np.inf  # Start from index 1 to exclude 0
+        # Apply the mask to modify the Q-values
+        masked_q_values = q_values * mask + np.invert(mask.astype(bool)) * -np.inf
 
         # The action (bid) with the highest Q-value is the best bid
-        bid_index = np.argmax(q_values[0][:6])  # Only consider the first 6 elements (bids)
-        bid = self.bidding_actions.get_action(bid_index)
+        bid_value_index = np.argmax(masked_q_values[:6])
+        bid_value = BidActions.get_bid_value_action(bid_value_index)
 
         # The action (suit) with the highest Q-value is the best suit to choose as trump
-        trump_suit_index = np.argmax(q_values[0][6:]) + 6  # Only consider the last 5 elements (suits)
-        trump_suit = self.bidding_actions.get_action(trump_suit_index)
+        bid_suit_index = np.argmax(masked_q_values[6:])
+        bid_suit = BidActions.get_bid_suit_action(bid_suit_index)
 
-        return bid, trump_suit
+        return bid_value, bid_suit
 
     def make_play(self, play_input):
         """
@@ -404,27 +430,32 @@ class Player:
 
         return action
 
-    def save_to_bid_buffer(self, bidding_input, action_taken, reward_received, next_bidding_input):
-        # Encode the current and next bidding states
-        current_observation = bidding_input.encode()
-        next_observation = next_bidding_input.encode()
+    def save_to_bid_buffer(self, bid_input, action_taken, reward_received):
+        # Encode the current bidding state
+        bid_input_encoded = bid_input.encode()
+
+        bid_value = action_taken[0]
+        bid_suit = action_taken[1]
+        bid_value_encoded = BidActions.get_bid_value_index(bid_value)
+        bid_suit_encoded = BidActions.get_bid_suit_index(bid_suit)
+        action_taken_encoded = tf.constant([bid_value_encoded, bid_suit_encoded], dtype=tf.int32)
 
         # Create a trajectory with the experience
         experience = trajectory.Trajectory(
-            step_type=tf.constant([0], dtype=tf.int32),  # Adjust step_type as needed
-            observation=current_observation,
-            action=action_taken,
+            step_type=tf.expand_dims(tf.constant(1, dtype=tf.int32), axis=0),
+            observation={key: tf.expand_dims(tf.constant(value), axis=0) for key, value in bid_input_encoded.items()},
+            action=tf.expand_dims(action_taken_encoded, axis=0),  # Note the change here
             policy_info=(),
-            next_step_type=tf.constant([0], dtype=tf.int32),  # Adjust next_step_type as needed
+            next_step_type=tf.expand_dims(tf.constant(1, dtype=tf.int32), axis=0),
             reward=tf.constant([reward_received], dtype=tf.float32),
-            discount=tf.constant([1.0], dtype=tf.float32),  # Adjust discount factor as needed
+            discount=tf.constant([1.0], dtype=tf.float32),
         )
 
         # Add the experience to the bid replay buffer
         self.bid_replay_buffer.add_batch(experience)
 
     def save_to_play_buffer(self, play_input, action_taken, reward_received):
-        # Encode the current and next playing states
+        # Encode the current playing state
         play_input_encoded = play_input.encode()
         action_taken_encoded = PlayActions.get_index(action_taken)
 
@@ -446,7 +477,7 @@ class Player:
         self.play_replay_buffer.add_batch(experience)
 
 
-class BiddingInput:
+class BidInput:
     """
     A class to represent the state of the game during the bidding phase, from the perspective of a single player.
 
@@ -469,8 +500,8 @@ class BiddingInput:
         Encodes the bidding input into a single numpy array. The encoded array includes one-hot encodings for the cards
         in the player's hand and previous bids, as well as the dealer position and score.
 
-    from_game_state(player_id: int, game_state: dict) -> BiddingInput:
-        Creates a BiddingInput object from a game state. The game state is a dictionary that includes information about
+    from_game_state(player_id: int, game_state: dict) -> BidInput:
+        Creates a BidInput object from a game state. The game state is a dictionary that includes information about
         the current state of the game, such as the hands of all players, all bids made so far, the position of the
         dealer, and the score.
 
@@ -584,133 +615,154 @@ class BiddingInput:
 
     def encode(self):
         """
-        Encodes the bidding state into a single vector.
-
-        This method encodes the current state of bidding, including the player's hand,
-        previous bids, dealer position, and score, into a single numpy array.
-
-        The hand is encoded using the encode_hand method, and each bid is encoded
-        using the encode_bid method. These encodings are then flattened and concatenated
-        into a single vector.
-
-        The dealer position and score are converted into numpy arrays and appended
-        to the vector. The previous bids are encoded and appended to the vector.
-
-        Args:
-            self
+        Encodes the bidding state into a dictionary of TensorFlow tensors.
 
         Returns:
-            numpy.ndarray: A vector representing the encoded bidding state.
+            dict: A dictionary representing the encoded bidding state.
         """
-        hand_encoding = BiddingInput.encode_hand(self.hand)
+        hand_encoding = BidInput.encode_hand(self.hand)
 
-        previous_bids_encoding = [BiddingInput.encode_bid(bid) for bid in self.previous_bids]
+        # Flatten the previous bids encoding for only the first three bids
+        previous_bids_encoding = [BidInput.encode_bid(bid) for bid in self.previous_bids[:3]]
         previous_bids_encoding = [item for sublist in previous_bids_encoding for item in sublist]
 
-        # Combine all features
-        input_vector = np.concatenate([
-            hand_encoding,
-            np.array([self.dealer_position]),
-            np.array(self.score),
-            np.array(previous_bids_encoding),
-        ])
+        dealer_position_encoding = [self.dealer_position]
+        score_encoding = self.score
 
-        return input_vector
+        return {
+            'hand': tf.constant(hand_encoding, dtype=tf.int32),
+            'previous_bids': tf.constant(previous_bids_encoding, dtype=tf.int32),
+            'dealer_position': tf.constant(dealer_position_encoding, dtype=tf.int32),
+            'score': tf.constant(score_encoding, dtype=tf.int32),
+        }
 
     @classmethod
     def decode(cls, encoded_state):
         """
-        Decodes the encoded state into a BiddingInput object.
+        Decodes the encoded state into a BidInput object.
 
         Args:
-            encoded_state (ndarray): Encoded state as a single vector.
+            encoded_state (dict): Encoded state as a dictionary of TensorFlow tensors.
 
         Returns:
-            BiddingInput: Decoded BiddingInput object.
+            BidInput: Decoded BidInput object.
         """
+        # Convert TensorFlow tensors to numpy arrays
+        hand_encoded = encoded_state['hand'].numpy()
+        previous_bids_encoded = encoded_state['previous_bids'].numpy()
+        dealer_position_encoded = encoded_state['dealer_position'].numpy()
+        score_encoded = encoded_state['score'].numpy()
+
         # Decode hand
-        hand_encoded = encoded_state[:24]
         hand = cls.decode_hand(hand_encoded)
 
         # Decode previous bids
-        # previous_bids_encoded = encoded_state[26:31]
-        # previous_bids = [cls.decode_bid(bid_encoded) for bid_encoded in previous_bids_encoded]
-
-        # Decode dealer position
-        dealer_position = int(encoded_state[24])
-
-        # Decode score
-        score = encoded_state[25:27].tolist()
-
-        # Decode previous bids
-        previous_bids_encoded = encoded_state[27:]
         previous_bids = []
         for i in range(0, len(previous_bids_encoded), 5):
             bid_encoded = previous_bids_encoded[i:i + 5]
             bid = cls.decode_bid(bid_encoded)
             previous_bids.append(bid)
 
+        # Decode dealer position
+        dealer_position = int(dealer_position_encoded[0])
+
+        # Decode score
+        score = score_encoded.tolist()
+
         return cls(hand, previous_bids, dealer_position, score)
 
     @classmethod
     def from_game_state(cls, player_id, game_state):
-        """Creates a BiddingInput object from a game state."""
+        """Creates a BidInput object from a game state."""
         # Extract relevant information from the game state
         hand = game_state["hands"][player_id]
         previous_bids = game_state["all_bids"]
         dealer_position = game_state["dealer_position"]
         score = game_state["score"]
 
-        # Create a BiddingInput object
-        bidding_input = cls(hand, previous_bids, dealer_position, score)
+        # Create a BidInput object
+        bid_input = cls(hand, previous_bids, dealer_position, score)
 
-        return bidding_input
+        return bid_input
 
 
-class BiddingActions:
-    """Represents the possible bidding actions in Pfeffer."""
+class BidActions:
+    """Represents the possible bid actions in Pfeffer."""
 
-    BIDS = [0, 4, 5, 6, 'pfeffer']
-    SUITS = ['S', 'H', 'D', 'C', 'NT']  # NT represents No-Trump
-
-    def __init__(self):
-        """Initializes the action space for the bidding phase."""
-        self.actions = self.BIDS + self.SUITS
-
-    def get_action(self, index):
+    @staticmethod
+    def get_bid_value_action(index):
         """
-        Returns the action corresponding to a given index.
+        Returns the bid value action corresponding to a given index.
 
         Args:
             index (int): The index of the action.
 
         Returns:
-            int or str: The action corresponding to the index.
+            int or str: The bid value action corresponding to the index.
         """
-        return self.actions[index]
+        return BID_VALUES[index]
 
-    def get_index(self, action):
+    @staticmethod
+    def get_bid_suit_action(index):
         """
-        Returns the index corresponding to a given action.
+        Returns the bid value action corresponding to a given index.
 
         Args:
-            action (int or str): The action.
+            index (int): The index of the action.
 
         Returns:
-            int: The index corresponding to the action.
+            str: The bid suit action corresponding to the index.
         """
-        return self.actions.index(action)
+        return BID_SUITS[index]
 
-    def get_number_of_actions(self):
+    @staticmethod
+    def get_bid_value_index(action):
         """
-        Returns the total number of actions in the action space.
+        Returns the index corresponding to a given bid value action.
+
+        Args:
+            action int or str: The bid value action.
 
         Returns:
-            int: The total number of actions.
+            int: The index corresponding to the bid value action.
         """
-        return len(self.actions)
+        return BID_VALUES.index(action)
 
-    def is_bid(self, action):
+    @staticmethod
+    def get_bid_suit_index(action):
+        """
+        Returns the index corresponding to a given bid suit action.
+
+        Args:
+            action str: The bid suit action.
+
+        Returns:
+            int: The index corresponding to the bid suit action.
+        """
+        return BID_SUITS.index(action)
+
+    @staticmethod
+    def get_number_of_bid_value_actions():
+        """
+        Returns the total number of bid value actions in the bid value action space.
+
+        Returns:
+            int: The total number of bid value actions.
+        """
+        return len(BID_VALUES)
+
+    @staticmethod
+    def get_number_of_bid_suit_actions():
+        """
+        Returns the total number of bid suit actions in the bid suit action space.
+
+        Returns:
+            int: The total number of bid suit actions.
+        """
+        return len(BID_SUITS)
+
+    @staticmethod
+    def is_bid(action):
         """
         Checks if an action is a bid.
 
@@ -720,9 +772,10 @@ class BiddingActions:
         Returns:
             bool: True if the action is a bid, False otherwise.
         """
-        return action in self.BIDS
+        return action in BID_VALUES
 
-    def is_suit_choice(self, action):
+    @staticmethod
+    def is_suit_choice(action):
         """
         Checks if an action is a suit choice.
 
@@ -732,7 +785,7 @@ class BiddingActions:
         Returns:
             bool: True if the action is a suit choice, False otherwise.
         """
-        return action in self.SUITS
+        return action in BID_SUITS
 
 
 class PlayInput:

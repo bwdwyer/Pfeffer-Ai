@@ -3,7 +3,7 @@ from unittest.mock import Mock
 
 import numpy as np
 
-from src.pfeffer_simulation import BiddingInput, Game, PlayInput
+from src.pfeffer_simulation import BidInput, Game, PlayInput
 
 
 # noinspection DuplicatedCode
@@ -40,6 +40,10 @@ class TestGame(TestCase):
         for player in game.players:
             assert 6 == len(player.hand)
 
+        # Verify that the play_experiences_cache is empty
+        assert all(item[1] is None for item in game.bid_experiences_cache)
+        assert all(all(item[1] is None for item in row) for row in game.play_experiences_cache)
+
     def test_reset_round(self):
         # Initialize models for bidding and playing (replace with actual models if needed)
         bid_model = None
@@ -55,6 +59,7 @@ class TestGame(TestCase):
         game.game_state["winning_bid"] = ('pfeffer', 3, 'C')
         game.game_state["lead_players"][0] = 0
         game.game_state["trick_winners"][0] = 3
+        game.game_state["dealer_position"] = 0
 
         # Store the original score to verify that it doesn't change
         original_score = game.game_state["score"].copy()
@@ -75,6 +80,13 @@ class TestGame(TestCase):
         # Verify that the hands have been reset (if you want to test this, you may need additional logic)
         for player in game.players:
             assert 6 == len(player.hand)
+
+        # Dealer moves to next position
+        self.assertEqual(1, game.game_state["dealer_position"])
+
+        # Verify that the play_experiences_cache is empty
+        assert all(item[1] is None for item in game.bid_experiences_cache)
+        assert all(all(item[1] is None for item in row) for row in game.play_experiences_cache)
 
     def test_evaluate_round_4bid_4_2(self):
         game = Game(Mock(), Mock())
@@ -131,27 +143,30 @@ class TestGame(TestCase):
         self.assertEqual(-12, score_team1)
         self.assertEqual(1, score_team2)
 
-    def test_play_round(self):
+    def test_bid_and_play_round(self):
         bid_model = Mock()
+        bid_model.predict.return_value = np.zeros(11)
         play_model = Mock()
         play_model.predict.return_value = np.zeros(24)
 
         game = Game(bid_model, play_model)
         game.reset()
-        game.game_state["winning_bid"] = (4, 0, 'C')
-        game.game_state["all_bids"] = [4, 0, 0, 0]
 
+        game.bid_round()
         game.play_round()
 
-        # Each player should have 6 experiences
+        # Each player should have:
+        #   1 bid experience
+        #   6 play experiences
         for i, player in enumerate(game.players):
+            self.assertEqual(1, player.bid_replay_buffer.num_frames())
             self.assertEqual(6, player.play_replay_buffer.num_frames())
-            # trajectories, _ = player.play_replay_buffer.get_next(sample_batch_size=6)
+
             trajectories, _ = player.play_replay_buffer.get_next()
             print(trajectories.observation)
 
 
-class TestBiddingInput(TestCase):
+class TestBidInput(TestCase):
 
     def test_encode_decode(self):
         # Define a sample game state
@@ -160,21 +175,21 @@ class TestBiddingInput(TestCase):
                 0: ['9S', 'TS', 'JS', 'QS', 'KS', 'AS'],
                 # other player hands if needed
             },
-            'all_bids': [4, 5, 0, 'pfeffer'],
+            'all_bids': [4, 5, 'pfeffer', ],
             'dealer_position': 2,
             'score': [10, 12],
             # other game state attributes if needed
         }
 
-        # Create a BiddingInput object using from_game_state
+        # Create a BidInput object using from_game_state
         player_id = 0
-        bidding_input = BiddingInput.from_game_state(player_id, game_state)
+        bidding_input = BidInput.from_game_state(player_id, game_state)
 
         # Encode the state
         encoded_state = bidding_input.encode()
 
         # Decode the state
-        decoded_bidding_input = BiddingInput.decode(encoded_state)
+        decoded_bidding_input = BidInput.decode(encoded_state)
 
         # Validate the decoded state against the original
         assert bidding_input.__dict__ == decoded_bidding_input.__dict__, \
