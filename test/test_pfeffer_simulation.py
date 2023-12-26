@@ -242,6 +242,70 @@ class TestPlayer(TestCase):
         # Check if reward is saved correctly
         self.assertEqual(trajectory.reward[0][0], reward_received)
 
+    def test_save_to_play_buffer(self):
+        # Mocks and initial setup
+        mock_bidding_model = Mock()
+        mock_play_model = Mock()
+        mock_bid_actions = Mock()
+        mock_play_actions = Mock()
+
+        # Initialize Player object
+        player = Player(0, mock_bidding_model, mock_play_model, mock_bid_actions, mock_play_actions)
+
+        # Initialize PlayInput object
+        player_id = 0
+        hand = ['9S', 'TS', 'JS', 'QS', 'KS', 'AS']
+        played_cards = [
+            [('9S', 0), ('TC', 1), ('9D', 2), ('TD', 3)],
+            [('JC', 2), ('QC', 3)],
+            [],
+            [],
+            [],
+            [],
+        ]
+        bidding_order = [0, 1, 2, 3]
+        all_bids = [4, 5, 0, 0]
+        winning_bid = (5, 1, 'S')
+        lead_players = [0, 1, None, None, None, None]
+        trick_winners = [0, 1, None, None, None, None]
+        current_trick = 1
+        score = [0, 0]
+        play_input = PlayInput(player_id, hand, played_cards, bidding_order, all_bids, winning_bid, lead_players,
+                               trick_winners, current_trick, score)
+
+        # Prepare action taken and reward received
+        action_taken = '9S'  # Example action taken (you'll need to specify this based on your game logic)
+        reward_received = 10.0  # Example reward
+
+        # Run the method to be tested
+        player.save_to_play_buffer(play_input, action_taken, reward_received)
+
+        # Verify that the play_replay_buffer has one more item
+        self.assertEqual(player.play_replay_buffer.num_frames(), 1)
+
+        # Retrieve the item from the replay buffer and convert to numpy arrays
+        dataset = player.play_replay_buffer.as_dataset(sample_batch_size=1, num_steps=1)
+        iterator = iter(dataset)
+        first_item = next(iterator)
+        first_item_numpy = tf.nest.map_structure(lambda t: t.numpy(), first_item)
+
+        # Extract the trajectory and observation from the first item
+        trajectory = first_item_numpy[0]
+        cached_observation = trajectory.observation
+        cached_action = trajectory.action[0][0]
+
+        # Decode the saved state (you'll need to use decoding methods similar to those in BidInput)
+        decoded_play_input = PlayInput.decode(cached_observation)  # Replace with the actual decoding logic
+
+        # Check if play state is saved correctly
+        self.assertEqual(decoded_play_input, play_input)
+
+        # Check if action is saved correctly
+        self.assertEqual(cached_action, action_taken)
+
+        # Check if reward is saved correctly
+        self.assertEqual(trajectory.reward[0][0], reward_received)
+
 
 class TestBidInput(TestCase):
 
@@ -288,14 +352,45 @@ class TestPlayInput(TestCase):
 
     def test_encode_decode_played_cards(self):
         played_cards = [[('9S', 0), ('9H', 1), ('9D', 2), ('9C', 3)], [('JC', 3), ], [], [], [], []]
+        # played_cards = [[('9S', 0), ('9H', 1), ('9D', 2), ('9C', 3)], [('JC', 3), ]]
 
         # Encode and then decode the played cards
         encoded_played_cards = PlayInput.encode_played_cards(played_cards)
+
+        # Check if the length of the encoded array is correct
+        expected_length = 4 * 24 * 6  # 4 players * 24 cards * 6 tricks
+        assert len(encoded_played_cards) == expected_length, \
+            f"Expected length: {expected_length}, got: {len(encoded_played_cards)}"
+
+        # Decode the played cards
         decoded_played_cards = PlayInput.decode_played_cards(encoded_played_cards)
 
         # The decoded played cards should match the original played cards (without the player ids)
         assert played_cards == decoded_played_cards, \
             f"\n{played_cards}\n{decoded_played_cards}"
+
+    def test_encode_and_decode_list_of_players(self):
+        # The original list of player states.
+        # Please replace with your actual test data
+        lead_players = [0, 3, None, None, None, None]
+
+        encoded_players = PlayInput.encode_list_of_players(lead_players)
+        expected_encoded_players = [
+            0, 1, 0, 0, 0,
+            0, 0, 0, 0, 1,
+            1, 0, 0, 0, 0,
+            1, 0, 0, 0, 0,
+            1, 0, 0, 0, 0,
+            1, 0, 0, 0, 0,
+        ]
+
+        assert encoded_players == expected_encoded_players, \
+            f"encoded_players {encoded_players}\nexpected_encoded_players {expected_encoded_players}"
+
+        decoded_data = PlayInput.decode_list_of_players(encoded_players)
+
+        assert lead_players == decoded_data,  \
+            f"lead_players {lead_players}\ndecoded_data {decoded_data}"
 
     def test_encode_decode(self):
         # Example Game State (This would normally be constructed and updated during the game)

@@ -325,7 +325,7 @@ class Player:
             'current_trick': tf.TensorSpec(shape=(6,), dtype=tf.int32),
             'score': tf.TensorSpec(shape=(2,), dtype=tf.int32),
         }
-        play_action_spec = tensor_spec.BoundedTensorSpec(shape=(), dtype=tf.int32, minimum=0, maximum=23)
+        play_action_spec = tensor_spec.BoundedTensorSpec(shape=(1,), dtype=tf.int32, minimum=0, maximum=23)
         play_data_spec = trajectory.Trajectory(
             observation=play_state_spec,
             action=play_action_spec,
@@ -444,7 +444,7 @@ class Player:
         experience = trajectory.Trajectory(
             step_type=tf.expand_dims(tf.constant(1, dtype=tf.int32), axis=0),
             observation={key: tf.expand_dims(tf.constant(value), axis=0) for key, value in bid_input_encoded.items()},
-            action=tf.expand_dims(action_taken_encoded, axis=0),  # Note the change here
+            action=tf.expand_dims(action_taken_encoded, axis=0),
             policy_info=(),
             next_step_type=tf.expand_dims(tf.constant(1, dtype=tf.int32), axis=0),
             reward=tf.constant([reward_received], dtype=tf.float32),
@@ -466,11 +466,11 @@ class Player:
         experience = trajectory.Trajectory(
             step_type=tf.expand_dims(tf.constant(step_type, dtype=tf.int32), axis=0),
             observation={key: tf.expand_dims(tf.constant(value), axis=0) for key, value in play_input_encoded.items()},
-            action=tf.expand_dims(tf.constant(action_taken_encoded, dtype=tf.int32), axis=0),
+            action=tf.expand_dims(tf.constant([action_taken_encoded], dtype=tf.int32), axis=0),
             policy_info=(),
             next_step_type=tf.expand_dims(tf.constant(next_step_type, dtype=tf.int32), axis=0),
-            reward=tf.expand_dims(tf.constant(reward_received, dtype=tf.float32), axis=0),
-            discount=tf.expand_dims(tf.constant(1.0, dtype=tf.float32), axis=0),
+            reward=tf.constant([reward_received], dtype=tf.float32),
+            discount=tf.constant([1.0], dtype=tf.float32),
         )
 
         # Add the experience to the play replay buffer
@@ -1002,13 +1002,13 @@ class PlayInput:
     @staticmethod
     def encode_list_of_players(players):
         """
-        Encodes the players who led each trick into one-hot vectors.
+        Encodes a list of players into one-hot vectors.
 
         Args:
-            players (list): The players who led each trick.
+            players (list): The players to be encoded.
 
         Returns:
-            list: A 24-element one-hot encoding of the lead players.
+            list: A 30-element one-hot encoding of a list of players.
         """
         possible_players = [-1, 0, 1, 2, 3]  # Include -1 as a possible player for tricks that haven't happened yet
         lead_players_encoding = []
