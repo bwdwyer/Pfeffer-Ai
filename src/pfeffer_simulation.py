@@ -319,7 +319,7 @@ class Player:
             'played_cards': tf.TensorSpec(shape=(6 * 4 * 24,), dtype=tf.int32),
             'bidding_order': tf.TensorSpec(shape=(4, 4), dtype=tf.int32),
             'all_bids': tf.TensorSpec(shape=(20,), dtype=tf.int32),
-            'winning_bid_encoding': tf.TensorSpec(shape=(14,), dtype=tf.int32),
+            'winning_bid': tf.TensorSpec(shape=(14,), dtype=tf.int32),
             'lead_players': tf.TensorSpec(shape=(30,), dtype=tf.int32),
             'trick_winners': tf.TensorSpec(shape=(30,), dtype=tf.int32),
             'current_trick': tf.TensorSpec(shape=(6,), dtype=tf.int32),
@@ -817,6 +817,11 @@ class PlayInput:
         self.current_trick = current_trick
         self.score = score
 
+    def __eq__(self, other):
+        if isinstance(other, PlayInput):
+            return self.__dict__ == other.__dict__
+        return False
+
     @staticmethod
     def encode_card(card):
         """
@@ -1022,20 +1027,24 @@ class PlayInput:
         return [item for sublist in lead_players_encoding for item in sublist]
 
     @staticmethod
-    def decode_list_of_players(encoded_players):
+    def decode_list_of_players(encoded_players, include_none=True):
         """
         Decodes an encoded tensor of players to a list of players.
 
         Args:
-            encoded_players (tf.Tensor): An encoded tensor of players.
+            :param encoded_players: (tf.Tensor): An encoded tensor of players.
+            :param include_none: Whether the encoded_players include values for no specified player.
 
         Returns:
             list: The decoded list of players.
         """
         lead_players = []
-        for i in range(6):
-            player_encoded = encoded_players[i * 5:i * 5 + 5]
-            player = PlayInput.decode_one_hot(player_encoded, [-1, 0, 1, 2, 3])
+        possible_values = [-1, 0, 1, 2, 3] if include_none else [0, 1, 2, 3]
+        vector_length = len(possible_values)
+        num_players = int(len(encoded_players) / vector_length)
+        for i in range(num_players):
+            player_encoded = encoded_players[i * vector_length:i * vector_length + vector_length]
+            player = PlayInput.decode_one_hot(player_encoded, possible_values)
             if player == -1:
                 player = None
             lead_players.append(player)
@@ -1114,7 +1123,7 @@ class PlayInput:
             'played_cards': tf.constant(played_cards_encoding, dtype=tf.int32),
             'bidding_order': tf.constant(bidding_order_encoding, dtype=tf.int32),
             'all_bids': tf.constant(all_bids_encoding, dtype=tf.int32),
-            'winning_bid_encoding': tf.constant(winning_bid_encoding, dtype=tf.int32),
+            'winning_bid': tf.constant(winning_bid_encoding, dtype=tf.int32),
             'lead_players': tf.constant(lead_players_encoding, dtype=tf.int32),
             'trick_winners': tf.constant(trick_winners_encoding, dtype=tf.int32),
             'current_trick': tf.constant(current_trick_encoding, dtype=tf.int32),
@@ -1176,7 +1185,7 @@ class PlayInput:
         ]
 
         # Decode winning_bid
-        winning_bid = PlayInput.decode_winning_bid(encoded_state['winning_bid_encoding'])
+        winning_bid = PlayInput.decode_winning_bid(encoded_state['winning_bid'])
 
         # Decode lead_players
         lead_players = PlayInput.decode_list_of_players(encoded_state['lead_players'])

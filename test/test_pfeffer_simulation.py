@@ -274,7 +274,7 @@ class TestPlayer(TestCase):
                                trick_winners, current_trick, score)
 
         # Prepare action taken and reward received
-        action_taken = '9S'  # Example action taken (you'll need to specify this based on your game logic)
+        action_taken = 'QS'  # Example action taken (you'll need to specify this based on your game logic)
         reward_received = 10.0  # Example reward
 
         # Run the method to be tested
@@ -292,19 +292,30 @@ class TestPlayer(TestCase):
         # Extract the trajectory and observation from the first item
         trajectory = first_item_numpy[0]
         cached_observation = trajectory.observation
-        cached_action = trajectory.action[0][0]
-
-        # Decode the saved state (you'll need to use decoding methods similar to those in BidInput)
-        decoded_play_input = PlayInput.decode(cached_observation)  # Replace with the actual decoding logic
+        cached_action = trajectory.action[0][0][0]
 
         # Check if play state is saved correctly
+        denested_observation = denest_arrays(cached_observation)
+        decoded_play_input = PlayInput.decode(denested_observation)
         self.assertEqual(decoded_play_input, play_input)
 
         # Check if action is saved correctly
-        self.assertEqual(cached_action, action_taken)
+        decoded_action = PlayActions.get_action(cached_action)
+        self.assertEqual(action_taken, decoded_action)
 
         # Check if reward is saved correctly
-        self.assertEqual(trajectory.reward[0][0], reward_received)
+        self.assertEqual(reward_received, trajectory.reward[0][0])
+
+
+def denest_arrays(dictionary):
+    """
+    This function takes in a dictionary with numpy arrays and outputs the dictionary with all numpy arrays denested.
+    :param dictionary: Dict with numpy arrays
+    :return: Dictionary with denest numpy arrays
+    """
+    for key in dictionary.keys():
+        dictionary[key] = np.squeeze(dictionary[key])
+    return dictionary
 
 
 class TestBidInput(TestCase):
