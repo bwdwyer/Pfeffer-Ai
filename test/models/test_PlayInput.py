@@ -58,6 +58,31 @@ class TestPlayInput(TestCase):
         assert lead_players == decoded_data, \
             f"lead_players {lead_players}\ndecoded_data {decoded_data}"
 
+    def test_encode_and_decode_bidding_order(self):
+        bidding_order_0 = [0, 1, 2, 3]
+        expected_encoding_0 = [
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            0, 0, 0, 1,
+        ]
+        encoded_bidding_order_0 = PlayInput.encode_bidding_order(bidding_order_0)
+        self.assertEqual(expected_encoding_0, encoded_bidding_order_0)
+        decoded_bidding_order_0 = PlayInput.decode_bidding_order(encoded_bidding_order_0)
+        self.assertEqual(bidding_order_0, decoded_bidding_order_0)
+
+        bidding_order_1 = [3, 0, 1, 2]
+        expected_encoding_1 = [
+            0, 0, 0, 1,
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+        ]
+        encoded_bidding_order_1 = PlayInput.encode_bidding_order(bidding_order_1)
+        self.assertEqual(expected_encoding_1, encoded_bidding_order_1)
+        decoded_bidding_order_1 = PlayInput.decode_bidding_order(encoded_bidding_order_1)
+        self.assertEqual(bidding_order_1, decoded_bidding_order_1)
+
     def test_encode_decode(self):
         # Example Game State (This would normally be constructed and updated during the game)
         game_state = {

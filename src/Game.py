@@ -2,19 +2,14 @@ import random
 
 from src.Player import Player
 from src.models import SUITS_COLORS
-from src.models.BidActions import BidActions
 from src.models.BidInput import BidInput
-from src.models.PlayActions import PlayActions
 from src.models.PlayInput import PlayInput
 
 
 class Game:
 
     def __init__(self, bid_model, play_model):
-        self.bid_actions = BidActions()
-        self.play_actions = PlayActions()
-
-        self.players = [Player(i, bid_model, play_model, self.bid_actions, self.play_actions) for i in range(4)]
+        self.players = [Player(i, bid_model, play_model) for i in range(4)]
 
         self.game_state = {
             "hands": {player.player_id: [] for player in self.players},  # Empty hands at the start
@@ -272,5 +267,3 @@ class Game:
         """Checks if the game is over."""
         # The game is over if either team's score is 32 or more
         return any(score >= 32 for score in self.game_state["score"])
-
-

@@ -4,18 +4,16 @@ from tf_agents.replay_buffers import tf_uniform_replay_buffer
 from tf_agents.specs import tensor_spec
 from tf_agents.trajectories import trajectory
 
+from src.models import SUITS_COLORS, CARDS
 from src.models.BidActions import BidActions
 from src.models.PlayActions import PlayActions
-from src.models import SUITS_COLORS, CARDS
 
 
 class Player:
-    def __init__(self, player_id, bidding_model, play_model, bid_actions, play_actions):
+    def __init__(self, player_id, bid_model, play_model):
         self.player_id = player_id
-        self.bidding_model = bidding_model
+        self.bid_model = bid_model
         self.play_model = play_model
-        self.bid_actions = bid_actions
-        self.play_actions = play_actions
 
         # Create bid data spec
         bid_state_spec = {
@@ -40,7 +38,7 @@ class Player:
             'player_id': tf.TensorSpec(shape=(4,), dtype=tf.int32),
             'hand': tf.TensorSpec(shape=(24,), dtype=tf.int32),
             'played_cards': tf.TensorSpec(shape=(6 * 4 * 24,), dtype=tf.int32),
-            'bidding_order': tf.TensorSpec(shape=(4, 4), dtype=tf.int32),
+            'bidding_order': tf.TensorSpec(shape=(16,), dtype=tf.int32),
             'all_bids': tf.TensorSpec(shape=(20,), dtype=tf.int32),
             'winning_bid': tf.TensorSpec(shape=(14,), dtype=tf.int32),
             'lead_players': tf.TensorSpec(shape=(30,), dtype=tf.int32),
@@ -83,7 +81,7 @@ class Player:
         encoded_state = bid_input.encode()
 
         # Get the Q-values from the bidding model
-        q_values = self.bidding_model.predict(encoded_state)
+        q_values = self.bid_model.predict(encoded_state)
 
         # Create a mask based on the highest previous bid
         highest_previous_bid = max(bid_input.previous_bids, default=0)
@@ -149,7 +147,7 @@ class Player:
 
         # Choose action with highest Q-value
         action_index = np.argmax(q_values)
-        action = self.play_actions.get_action(action_index)
+        action = PlayActions.get_action(action_index)
 
         return action
 

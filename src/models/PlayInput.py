@@ -1,6 +1,8 @@
 import numpy as np
 import tensorflow as tf
 
+from src.models import find_index
+
 
 class PlayInput:
     """
@@ -291,7 +293,7 @@ class PlayInput:
             bidding_order (list): The bidding order.
 
         Returns:
-            list: A list of 4-element one-hot encodings of the bidding order.
+            list: A flattened list of the one-hot encodings of the bidding order.
         """
         possible_players = [0, 1, 2, 3]
         bidding_order_encoding = []
@@ -299,9 +301,37 @@ class PlayInput:
         for player in bidding_order:
             player_encoding = [0] * len(possible_players)
             player_encoding[possible_players.index(player)] = 1
-            bidding_order_encoding.append(player_encoding)
+            bidding_order_encoding.extend(player_encoding)
 
-        return bidding_order_encoding  # Returning a list of lists instead of a flattened list
+        return bidding_order_encoding
+
+    @staticmethod
+    def decode_bidding_order(bidding_order_encoding):
+        """
+        Decode the bidding order from one-hot vectors.
+
+        Args:
+            bidding_order_encoding (list): A list of one-hot encodings of the bidding order.
+
+        Returns:
+            list: The original bidding order.
+        """
+        # We know that each player was represented by 4 bits in the encoding
+        players_encoding_length = 4
+        bidding_order = []
+
+        # We'll iterate our encoded list 4 elements at a time
+        for i in range(0, len(bidding_order_encoding), players_encoding_length):
+            # We'll slice our list to get the current player's encoding
+            player_encoding = bidding_order_encoding[i:i + players_encoding_length]
+
+            # The index of '1' in the player_encoding list is the player number
+            player = find_index(player_encoding, 1)
+
+            # We add this player to our bidding_order
+            bidding_order.append(player)
+
+        return bidding_order
 
     def encode(self):
         """
@@ -387,8 +417,7 @@ class PlayInput:
         played_cards = PlayInput.decode_played_cards(encoded_state['played_cards'])
 
         # Decode bidding_order
-        bidding_order = [PlayInput.decode_one_hot(player_encoded, [0, 1, 2, 3]) for player_encoded in
-                         encoded_state['bidding_order']]
+        bidding_order = PlayInput.decode_bidding_order(encoded_state['bidding_order'])
 
         # Decode all_bids
         all_bids = [

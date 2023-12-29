@@ -17,11 +17,9 @@ class TestPlayer(TestCase):
         # Mocks and initial setup
         mock_bidding_model = Mock()
         mock_play_model = Mock()
-        mock_bid_actions = Mock()
-        mock_play_actions = Mock()
 
         # Initialize Player object
-        player = Player(0, mock_bidding_model, mock_play_model, mock_bid_actions, mock_play_actions)
+        player = Player(0, mock_bidding_model, mock_play_model)
 
         # Prepare BidInput object
         hand = ['9S', 'TS', 'JS', 'QS', 'KS', 'AS']
@@ -93,11 +91,9 @@ class TestPlayer(TestCase):
         # Mocks and initial setup
         mock_bidding_model = Mock()
         mock_play_model = Mock()
-        mock_bid_actions = Mock()
-        mock_play_actions = Mock()
 
         # Initialize Player object
-        player = Player(0, mock_bidding_model, mock_play_model, mock_bid_actions, mock_play_actions)
+        player = Player(0, mock_bidding_model, mock_play_model)
 
         # Initialize PlayInput object
         player_id = 0
