@@ -2,6 +2,7 @@ import random
 
 from src.Player import Player
 from src.models import SUITS_COLORS
+from src.models.BidActions import BidActions
 from src.models.BidInput import BidInput
 from src.models.PlayInput import PlayInput
 
@@ -45,8 +46,10 @@ class Game:
                 '9D', 'TD', 'JD', 'QD', 'KD', 'AD',
                 '9C', 'TC', 'JC', 'QC', 'KC', 'AC']
         random.shuffle(deck)
+        self.game_state["hands"].clear()
         for i, player in enumerate(self.players):
-            player.hand = deck[i * 6: (i + 1) * 6]
+            hand = deck[i * 6: (i + 1) * 6]
+            self.game_state["hands"][player.player_id] = hand
 
         # Reset current trick
         self.game_state["current_trick"] = 0
@@ -55,8 +58,8 @@ class Game:
         self.game_state["played_cards"] = [[] for _ in range(6)]
 
         # Reset bids
-        self.game_state["all_bids"] = []
-        self.game_state["winning_bid"] = (-1, -1, None)
+        self.game_state["all_bids"] = [None for _ in range(4)]
+        self.game_state["winning_bid"] = (0, -1, None)
 
         # Reset lead players for tricks
         self.game_state["lead_players"] = [None] * 6
@@ -80,10 +83,10 @@ class Game:
             bid, trump_suit = player.make_bid(bid_input)
 
             # Update game state with bid
-            self.game_state["all_bids"].append(bid)
+            self.game_state["all_bids"][player_id] = bid
 
             # Check if this bid is higher than the current winning bid
-            if bid > self.game_state["winning_bid"][0]:
+            if BidActions.get_bid_value_index(bid) > BidActions.get_bid_value_index(self.game_state["winning_bid"][0]):
                 self.game_state["winning_bid"] = (bid, player_id, trump_suit)
 
             # Save experience to cache
@@ -105,6 +108,7 @@ class Game:
         # Get the player who won the bid
         bid_winner = self.game_state["winning_bid"][1]
         bid_value = self.game_state["winning_bid"][0]
+        bid_suit = self.game_state["winning_bid"][2]
 
         # Determine if the bid winner is playing alone (i.e., bid 'pfeffer')
         playing_alone = bid_value == 'pfeffer'
@@ -117,6 +121,7 @@ class Game:
         while play_order[0] != bid_winner:
             play_order.append(play_order.pop(0))
 
+        print(f"Staring round. \nBid winner: {bid_winner}.\nBid value: {bid_value}\nBid suit: {bid_suit}")
         for trick in range(6):  # 6 tricks in a round
             self.game_state["current_trick"] = trick
             for player_id in play_order:
@@ -129,13 +134,16 @@ class Game:
                 play_input = PlayInput.from_game_state(player_id, self.game_state)
 
                 # Ask the player to make a play
-                play = self.players[player_id].make_play(play_input)
+                card_played = self.players[player_id].make_play(play_input)
 
+                # Save experience
                 self.play_experiences_cache[player_id][trick][0] = play_input
-                self.play_experiences_cache[player_id][trick][1] = play
+                self.play_experiences_cache[player_id][trick][1] = card_played
 
                 # Update the game state with the play
-                self.game_state["played_cards"][trick].append((player_id, play))
+                self.game_state["played_cards"][trick].append((player_id, card_played))
+                print(f"Removing {card_played} from {player_id}, hand: {self.game_state['hands'][player_id]}")
+                self.game_state["hands"][player_id].remove(card_played)
 
             # Update the play order so the player who won the trick leads the next one
             trick_winner = self.evaluate_trick()
@@ -187,10 +195,14 @@ class Game:
 
         # Define the left bauer based on trump suit
         opposite_color_suits = {"black": ["S", "C"], "red": ["H", "D"]}
-        left_bauer_suit = [s for s in opposite_color_suits[SUITS_COLORS[trump_suit]] if s != trump_suit][0]
+        left_bauer_suit = None if trump_suit == 'NT' else \
+            [s for s in opposite_color_suits[SUITS_COLORS[trump_suit]] if s != trump_suit][0]
 
         # Rank the cards based on their value
         def card_value(card):
+            if card is None:
+                return -1
+
             rank, suit = card[:-1], card[-1]
             rank_values = {'9': 0, 'T': 1, 'J': 2, 'Q': 3, 'K': 4, 'A': 5}  # Default values
 

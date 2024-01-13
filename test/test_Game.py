@@ -1,7 +1,9 @@
+import unittest
 from unittest import TestCase
 from unittest.mock import Mock
 
 import numpy as np
+import tensorflow as tf
 
 from src.Game import *
 
@@ -31,8 +33,8 @@ class TestGame(TestCase):
         # Verify that the game state has been reset
         assert [0, 0] == game.game_state["score"]
         assert all(len(trick) == 0 for trick in game.game_state["played_cards"])
-        assert [] == game.game_state["all_bids"]
-        assert (-1, -1, None) == game.game_state["winning_bid"]
+        self.assertEqual([None, None, None, None], game.game_state["all_bids"])
+        assert (0, -1, None) == game.game_state["winning_bid"]
         assert [None] * 6 == game.game_state["lead_players"], game.game_state["lead_players"]
         assert [None] * 6 == game.game_state["trick_winners"], game.game_state["trick_winners"]
 
@@ -69,8 +71,8 @@ class TestGame(TestCase):
 
         # Verify that round-specific state has been reset
         assert all(len(trick) == 0 for trick in game.game_state["played_cards"])
-        assert [] == game.game_state["all_bids"]
-        assert (-1, -1, None) == game.game_state["winning_bid"]
+        self.assertEqual([None, None, None, None], game.game_state["all_bids"])
+        assert (0, -1, None) == game.game_state["winning_bid"]
         assert [None] * 6 == game.game_state["lead_players"], game.game_state["lead_players"]
         assert [None] * 6 == game.game_state["trick_winners"], game.game_state["trick_winners"]
 
@@ -145,9 +147,9 @@ class TestGame(TestCase):
 
     def test_bid_and_play_round(self):
         bid_model = Mock()
-        bid_model.predict.return_value = np.zeros(11)
+        bid_model.predict.return_value = [np.zeros(10)]
         play_model = Mock()
-        play_model.predict.return_value = np.zeros(24)
+        play_model.predict.return_value = [np.zeros(24)]
 
         game = Game(bid_model, play_model)
         game.reset()
@@ -164,3 +166,56 @@ class TestGame(TestCase):
 
             trajectories, _ = player.play_replay_buffer.get_next()
             print(trajectories.observation)
+
+    def test_bid_and_play_round_with_sequentials(self):
+        bid_model = tf.keras.models.Sequential([
+            tf.keras.layers.Input(shape=(24 + 1 + 2 + 15,), name="input"),  # 42
+            tf.keras.layers.Dense(64, activation='relu', name="hidden1"),
+            tf.keras.layers.Dense(64, activation='relu', name="hidden2"),
+            tf.keras.layers.Dense(10, name="output"),
+        ], name="bid_model")
+        bid_model.compile(optimizer='adam', loss='mse')
+        play_model = tf.keras.models.Sequential([
+            tf.keras.layers.Input(shape=(4 + 24 + (6 * 4 * 24) + 16 + 20 + 14 + 30 + 30 + 6 + 2,), name="input"),  # 722
+            tf.keras.layers.Dense(64, activation='relu', name="hidden1"),
+            tf.keras.layers.Dense(64, activation='relu', name="hidden2"),
+            tf.keras.layers.Dense(24, name="output"),
+        ], name="play_model")
+        play_model.compile(optimizer='adam', loss='mse')
+
+        game = Game(bid_model, play_model)
+        game.reset()
+        game.reset_round()
+
+        game.bid_round()
+        game.play_round()
+
+        # Each player should have:
+        #   1 bid experience
+        #   6 play experiences
+        for i, player in enumerate(game.players):
+            self.assertEqual(1, player.bid_replay_buffer.num_frames())
+            self.assertEqual(6, player.play_replay_buffer.num_frames())
+
+            trajectories, _ = player.play_replay_buffer.get_next()
+            print(trajectories.observation)
+
+    @unittest.skip("indefinite game")
+    def test_play_game(self):
+        bid_model = tf.keras.models.Sequential([
+            tf.keras.layers.Input(shape=(24 + 1 + 2 + 15,), name="input"),
+            tf.keras.layers.Dense(64, activation='relu', name="hidden1"),
+            tf.keras.layers.Dense(64, activation='relu', name="hidden2"),
+            tf.keras.layers.Dense(10, name="output"),
+        ], name="bid_model")
+        bid_model.compile(optimizer='adam', loss='mse')
+        play_model = tf.keras.models.Sequential([
+            tf.keras.layers.Input(shape=(4 + 24 + (6 * 4 * 24) + 16 + 20 + 14 + 30 + 30 + 6 + 2,), name="input"),  # 722
+            tf.keras.layers.Dense(64, activation='relu', name="hidden1"),
+            tf.keras.layers.Dense(64, activation='relu', name="hidden2"),
+            tf.keras.layers.Dense(24, name="output"),
+        ], name="play_model")
+        play_model.compile(optimizer='adam', loss='mse')
+
+        game = Game(bid_model, play_model)
+        game.play_game()

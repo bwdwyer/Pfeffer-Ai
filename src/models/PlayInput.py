@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 
-from src.models import find_index
+from src.models import find_index, BID_VALUES, BID_SUITS
 
 
 class PlayInput:
@@ -176,18 +176,18 @@ class PlayInput:
             np.array: The one-hot encoding of the bid.
         """
         bid_quantity, player, bid_suit = winning_bid
-        possible_bids = [0, 4, 5, 6, 'pfeffer']
-        possible_suits = ['S', 'H', 'D', 'C', 'no-trump']
+        # possible_bids = [0, 4, 5, 6, 'pfeffer']
+        # possible_suits = ['S', 'H', 'D', 'C', 'NT']
         possible_players = [0, 1, 2, 3]
 
-        bid_quantity_encoding = [0] * len(possible_bids)
-        bid_quantity_encoding[possible_bids.index(bid_quantity)] = 1
+        bid_quantity_encoding = [0] * len(BID_VALUES)
+        bid_quantity_encoding[BID_VALUES.index(bid_quantity)] = 1
 
         player_encoding = [0] * len(possible_players)
         player_encoding[possible_players.index(player)] = 1
 
-        bid_suit_encoding = [0] * len(possible_suits)
-        bid_suit_encoding[possible_suits.index(bid_suit)] = 1
+        bid_suit_encoding = [0] * len(BID_SUITS)
+        bid_suit_encoding[BID_SUITS.index(bid_suit)] = 1
 
         return np.concatenate([bid_quantity_encoding, player_encoding, bid_suit_encoding])
 

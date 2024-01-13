@@ -109,7 +109,7 @@ class BidInput:
         vector are zero.
 
         Args:
-            bid (int or str): The bid to encode.
+            bid (None, int or str): The bid to encode.
 
         Returns:
             list: A one-hot encoded list representing the bid.
@@ -147,6 +147,8 @@ class BidInput:
         """
         hand_encoding = BidInput.encode_hand(self.hand)
 
+        # Pad to size 3 with None, for bids that have not yet occurred
+        self.previous_bids += [None] * (3 - len(self.previous_bids))
         # Flatten the previous bids encoding for only the first three bids
         previous_bids_encoding = [BidInput.encode_bid(bid) for bid in self.previous_bids[:3]]
         previous_bids_encoding = [item for sublist in previous_bids_encoding for item in sublist]
@@ -155,10 +157,10 @@ class BidInput:
         score_encoding = self.score
 
         return {
-            'hand': tf.constant(hand_encoding, dtype=tf.int32),
-            'previous_bids': tf.constant(previous_bids_encoding, dtype=tf.int32),
-            'dealer_position': tf.constant(dealer_position_encoding, dtype=tf.int32),
-            'score': tf.constant(score_encoding, dtype=tf.int32),
+            'hand': tf.constant(hand_encoding, dtype=tf.int32),  # 24
+            'previous_bids': tf.constant(previous_bids_encoding, dtype=tf.int32),  # 15
+            'dealer_position': tf.constant(dealer_position_encoding, dtype=tf.int32),  # 1
+            'score': tf.constant(score_encoding, dtype=tf.int32),  # 2
         }
 
     @classmethod

@@ -1,11 +1,13 @@
 import numpy as np
+import numpy.ma as ma
 import tensorflow as tf
 from tf_agents.replay_buffers import tf_uniform_replay_buffer
 from tf_agents.specs import tensor_spec
 from tf_agents.trajectories import trajectory
 
-from src.models import SUITS_COLORS, CARDS
+from src.models import SUITS_COLORS, CARDS, BID_VALUES
 from src.models.BidActions import BidActions
+from src.models.BidInput import BidInput
 from src.models.PlayActions import PlayActions
 
 
@@ -79,24 +81,33 @@ class Player:
 
         # Get the encoded state as a dictionary
         encoded_state = bid_input.encode()
+        # Flatten and concatenate encoded states
+        flattened_encoded_state = tf.concat([tf.reshape(tensor, [-1]) for tensor in encoded_state.values()], 0)
+        # Reshape tensor to meet model's input requirement
+        flattened_encoded_state = tf.reshape(flattened_encoded_state, (-1, 42))
 
         # Get the Q-values from the bidding model
-        q_values = self.bid_model.predict(encoded_state)
+        q_values = self.bid_model.predict(flattened_encoded_state)[0]
 
         # Create a mask based on the highest previous bid
-        highest_previous_bid = max(bid_input.previous_bids, default=0)
-        mask = np.ones(11)  # 11 is the total number of actions (6 bids + 5 suits)
-        mask[1:highest_previous_bid + 1] = 0  # Mask out illegal bids
-
-        # Apply the mask to modify the Q-values
-        masked_q_values = q_values * mask + np.invert(mask.astype(bool)) * -np.inf
+        mask = np.ones(10)  # 10 is the total number of actions (5 bids + 5 suits)
+        if all(elem == 0 for elem in bid_input.previous_bids):
+            # Dealer is "hung", must bid something either than 0
+            mask[0] = 0  # Mask out illegal bid
+        else:
+            # Must bid '0', or bid higher than the highest bid
+            highest_previous_bid = max((bid for bid in bid_input.previous_bids if bid is not None),
+                                       key=BID_VALUES.index, default=0)
+            mask[1:BidActions.get_bid_value_index(highest_previous_bid) + 1] = 0  # Mask out illegal bids
 
         # The action (bid) with the highest Q-value is the best bid
-        bid_value_index = np.argmax(masked_q_values[:6])
+        masked_q_values = ma.masked_array(q_values[:5], mask=np.logical_not(mask[:5]))
+        bid_value_index = np.argmax(masked_q_values)
         bid_value = BidActions.get_bid_value_action(bid_value_index)
 
         # The action (suit) with the highest Q-value is the best suit to choose as trump
-        bid_suit_index = np.argmax(masked_q_values[6:])
+        masked_q_values = ma.masked_array(q_values[5:], mask=np.logical_not(mask[5:]))
+        bid_suit_index = np.argmax(masked_q_values)
         bid_suit = BidActions.get_bid_suit_action(bid_suit_index)
 
         return bid_value, bid_suit
@@ -104,6 +115,7 @@ class Player:
     def make_play(self, play_input):
         """
         Makes a play by choosing a card using the Q-network.
+        Removes the card from the player's hand.
 
         Args:
             play_input (PlayInput): The game state as known by the current player.
@@ -112,11 +124,14 @@ class Player:
             action (PlayInput): The chosen action (card to play).
         """
         # Get current state of the game and encode it
-        state_vector = play_input.encode()
+        encoded_state = play_input.encode()
+        # Flatten and concatenate encoded states
+        flattened_encoded_state = tf.concat([tf.reshape(tensor, [-1]) for tensor in encoded_state.values()], 0)
+        # Reshape tensor to meet model's input requirement
+        flattened_encoded_state = tf.reshape(flattened_encoded_state, (-1, 722))
 
         # Get Q-values for the current state
-        # q_values = self.play_model.predict(state_vector[None, :], verbose=0)[0]
-        q_values = self.play_model.predict(x=state_vector, verbose=0)
+        q_values = self.play_model.predict(flattened_encoded_state)[0]
 
         # Mask out illegal actions (cards not in hand)
         mask = [1 if card in play_input.hand else 0 for card in CARDS]
@@ -135,7 +150,9 @@ class Player:
             # Modify mask for lead suit, right bauer, and left bauer
             mask_suit = []
             for card in CARDS:
-                if card[-1] == lead_suit or card == right_bauer or card == left_bauer:
+                if (card[-1] == lead_suit or
+                        # card == right_bauer or
+                        (card == left_bauer and lead_suit == trump_suit)):
                     mask_suit.append(1 if card in play_input.hand else 0)
                 else:
                     mask_suit.append(0)
@@ -143,13 +160,24 @@ class Player:
             if any(val == 1 for val in mask_suit):  # If any card can be played, update the mask
                 mask = mask_suit
 
-        q_values = q_values * np.array(mask) + np.invert(mask) * -np.inf
+        masked_q_values = ma.masked_array(q_values, mask=np.logical_not(mask))
+        play_value_index = np.argmax(masked_q_values)
+        card_played = PlayActions.get_action(play_value_index)
 
-        # Choose action with highest Q-value
-        action_index = np.argmax(q_values)
-        action = PlayActions.get_action(action_index)
+        # Log play
+        print(f"Player {self.player_id} played {card_played}")
+        if card_played not in play_input.hand:
+            print(f"Invalid play\n"
+                  f"Played Cards: {play_input.played_cards}\n"
+                  f"Hand: {play_input.hand}\n"
+                  f"Mask: {mask}\n"
+                  f"q_values: {q_values}\n"
+                  f"masked_q_values: {masked_q_values}\n"
+                  f"masked_q_values: {masked_q_values}\n"
+                  f"play_value_index: {play_value_index}\n"
+                  f"card_played: {card_played}")
 
-        return action
+        return card_played
 
     def save_to_bid_buffer(self, bid_input, action_taken, reward_received):
         # Encode the current bidding state

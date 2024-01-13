@@ -13,6 +13,79 @@ from src.Player import Player
 
 class TestPlayer(TestCase):
 
+    def test_make_bid(self):
+        # Mocks and initial setup
+        mock_bidding_model = Mock()
+
+        # Initialize Player object
+        player = Player(0, mock_bidding_model, Mock())
+
+        # Prepare BidInput object
+        hand = ['9S', 'TS', 'JS', 'QS', 'KS', 'AS']
+        dealer_position = 3
+        score = [0, 0]
+
+        # First bid, may bid 0
+        previous_bids = [None, None, None, ]
+        bid_input = BidInput(hand, previous_bids, dealer_position, score)
+        mock_bidding_model.predict.return_value = [[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, ]]
+        bid_value, bid_suit = player.make_bid(bid_input)
+        self.assertEqual(0, bid_value)
+
+        # Last bid, may not bid '0'
+        previous_bids = [0, 0, 0, ]
+        bid_input = BidInput(hand, previous_bids, dealer_position, score)
+        mock_bidding_model.predict.return_value = [[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, ]]
+        bid_value, bid_suit = player.make_bid(bid_input)
+        self.assertNotEquals(0, bid_value)
+
+        # Overbids other players
+        previous_bids = [4, None, None, ]
+        bid_input = BidInput(hand, previous_bids, dealer_position, score)
+        mock_bidding_model.predict.return_value = [[0, 1, 0.5, 0, 0, 0, 0, 0, 0, 0, ]]
+        bid_value, bid_suit = player.make_bid(bid_input)
+        self.assertEqual(5, bid_value)
+
+        # May only bid '0' when someone has 'pfeffered'
+        previous_bids = [0, 0, 'pfeffer', ]
+        bid_input = BidInput(hand, previous_bids, dealer_position, score)
+        mock_bidding_model.predict.return_value = [[0, 1, 1, 1, 1, 0, 0, 0, 0, 0, ]]
+        bid_value, bid_suit = player.make_bid(bid_input)
+        self.assertEqual(0, bid_value)
+
+    def test_make_play(self):
+        # Mocks and initial setup
+        mock_play_model = Mock()
+
+        # Initialize Player object
+        player = Player(0, Mock(), mock_play_model)
+
+        # Prepare PlayInput object
+        player_id = 0
+        hand = ['TS', 'JS', 'QS', 'KS', 'AS']
+        played_cards = [
+            [('9S', 0), ('TC', 1), ('9D', 2), ('TD', 3)],
+            [('JC', 2), ('QC', 3)],
+            [],
+            [],
+            [],
+            [],
+        ]
+        bidding_order = [0, 1, 2, 3]
+        all_bids = [4, 5, 0, 0]
+        winning_bid = (5, 1, 'D')
+        lead_players = [0, 1, None, None, None, None]
+        trick_winners = [0, 1, None, None, None, None]
+        current_trick = 1
+        score = [0, 0]
+        play_input = PlayInput(player_id, hand, played_cards, bidding_order, all_bids, winning_bid, lead_players,
+                               trick_winners, current_trick, score)
+
+        mock_return_value = [np.zeros(722)]
+        mock_play_model.predict.return_value = mock_return_value
+        card_played = player.make_play(play_input)
+        self.assertEqual('TS', card_played)
+
     def test_save_to_bid_buffer(self):
         # Mocks and initial setup
         mock_bidding_model = Mock()
