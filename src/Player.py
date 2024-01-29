@@ -87,11 +87,12 @@ class Player:
         flattened_encoded_state = tf.reshape(flattened_encoded_state, (-1, 42))
 
         # Get the Q-values from the bidding model
-        q_values = self.bid_model.predict(flattened_encoded_state)[0]
+        # q_values = self.bid_model.predict(flattened_encoded_state)[0]
+        q_values = self.bid_model.predict(flattened_encoded_state, verbose=0)[0]
 
         # Create a mask based on the highest previous bid
         mask = np.ones(10)  # 10 is the total number of actions (5 bids + 5 suits)
-        if all(elem == 0 for elem in bid_input.previous_bids):
+        if all(elem == 0 for elem in bid_input.previous_bids[:3]):
             # Dealer is "hung", must bid something either than 0
             mask[0] = 0  # Mask out illegal bid
         else:
@@ -131,21 +132,30 @@ class Player:
         flattened_encoded_state = tf.reshape(flattened_encoded_state, (-1, 722))
 
         # Get Q-values for the current state
-        q_values = self.play_model.predict(flattened_encoded_state)[0]
+        # q_values = self.play_model.predict(flattened_encoded_state)[0]
+        q_values = self.play_model.predict(flattened_encoded_state, verbose=0)[0]
 
         # Mask out illegal actions (cards not in hand)
         mask = [1 if card in play_input.hand else 0 for card in CARDS]
 
         # If it's not the first card in the trick, it must follow suit if possible
-        if play_input.played_cards[-1]:
-            lead_suit = play_input.played_cards[-1][0][1][-1]
-            trump_suit = play_input.winning_bid[2]
-
+        cards_played_in_current_trick = play_input.played_cards[play_input.current_trick]
+        if cards_played_in_current_trick and cards_played_in_current_trick[-1]:
             # Define the left bauer based on trump suit
-            opposite_color_suits = {"black": ["S", "C"], "red": ["H", "D"]}
-            left_bauer_suit = [s for s in opposite_color_suits[SUITS_COLORS[trump_suit]] if s != trump_suit][0]
-            right_bauer = 'J' + trump_suit
-            left_bauer = 'J' + left_bauer_suit
+            trump_suit = play_input.winning_bid[2]
+            if trump_suit != 'NT':
+                opposite_color_suits = {"black": ["S", "C"], "red": ["H", "D"]}
+                left_bauer_suit = [s for s in opposite_color_suits[SUITS_COLORS[trump_suit]] if s != trump_suit][0]
+                right_bauer = 'J' + trump_suit
+                left_bauer = 'J' + left_bauer_suit
+            else:
+                left_bauer = None
+
+            # Define the lead suit
+            # print(f"cards played in current trick {cards_played_in_current_trick}")
+            lead_card = cards_played_in_current_trick[0][1]
+            # print(f"lead_card: {lead_card}")
+            lead_suit = trump_suit if lead_card is left_bauer else lead_card[0]
 
             # Modify mask for lead suit, right bauer, and left bauer
             mask_suit = []
@@ -165,7 +175,7 @@ class Player:
         card_played = PlayActions.get_action(play_value_index)
 
         # Log play
-        print(f"Player {self.player_id} played {card_played}")
+        # print(f"Player {self.player_id} played {card_played}")
         if card_played not in play_input.hand:
             print(f"Invalid play\n"
                   f"Played Cards: {play_input.played_cards}\n"
@@ -204,7 +214,12 @@ class Player:
         self.bid_replay_buffer.add_batch(experience)
 
     def save_to_play_buffer(self, play_input, action_taken, reward_received):
+        if action_taken is None:
+            # No action was taken, i.e. their partner pfeffered, and they have no experience to save.
+            return
+
         # Encode the current playing state
+        # print(f"Saving play input {play_input} action taken {action_taken} reward {reward_received}")
         play_input_encoded = play_input.encode()
         action_taken_encoded = PlayActions.get_index(action_taken)
 

@@ -137,12 +137,13 @@ class Game:
                 card_played = self.players[player_id].make_play(play_input)
 
                 # Save experience
+                # print(f"Saving play experience for {player_id}")
                 self.play_experiences_cache[player_id][trick][0] = play_input
                 self.play_experiences_cache[player_id][trick][1] = card_played
 
                 # Update the game state with the play
                 self.game_state["played_cards"][trick].append((player_id, card_played))
-                print(f"Removing {card_played} from {player_id}, hand: {self.game_state['hands'][player_id]}")
+                # print(f"Removing {card_played} from {player_id}, hand: {self.game_state['hands'][player_id]}")
                 self.game_state["hands"][player_id].remove(card_played)
 
             # Update the play order so the player who won the trick leads the next one
@@ -270,10 +271,13 @@ class Game:
     def play_game(self):
         """Plays a full game."""
         self.reset()
-        while not self.game_over():
+        round_iteration = 0
+        while not self.game_over() and round_iteration < 64:
+            round_iteration += 1
             self.reset_round()
             self.bid_round()
             self.play_round()
+            print(f"Finished round {round_iteration} {self.game_state}")
 
     def game_over(self):
         """Checks if the game is over."""

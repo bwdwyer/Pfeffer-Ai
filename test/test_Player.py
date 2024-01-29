@@ -26,28 +26,28 @@ class TestPlayer(TestCase):
         score = [0, 0]
 
         # First bid, may bid 0
-        previous_bids = [None, None, None, ]
+        previous_bids = [None, None, None, None]
         bid_input = BidInput(hand, previous_bids, dealer_position, score)
         mock_bidding_model.predict.return_value = [[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, ]]
         bid_value, bid_suit = player.make_bid(bid_input)
         self.assertEqual(0, bid_value)
 
         # Last bid, may not bid '0'
-        previous_bids = [0, 0, 0, ]
+        previous_bids = [0, 0, 0, None]
         bid_input = BidInput(hand, previous_bids, dealer_position, score)
-        mock_bidding_model.predict.return_value = [[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, ]]
+        mock_bidding_model.predict.return_value = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ]]
         bid_value, bid_suit = player.make_bid(bid_input)
-        self.assertNotEquals(0, bid_value)
+        self.assertEquals(4, bid_value)
 
         # Overbids other players
-        previous_bids = [4, None, None, ]
+        previous_bids = [4, None, None, None]
         bid_input = BidInput(hand, previous_bids, dealer_position, score)
         mock_bidding_model.predict.return_value = [[0, 1, 0.5, 0, 0, 0, 0, 0, 0, 0, ]]
         bid_value, bid_suit = player.make_bid(bid_input)
         self.assertEqual(5, bid_value)
 
         # May only bid '0' when someone has 'pfeffered'
-        previous_bids = [0, 0, 'pfeffer', ]
+        previous_bids = [0, 0, 'pfeffer', None]
         bid_input = BidInput(hand, previous_bids, dealer_position, score)
         mock_bidding_model.predict.return_value = [[0, 1, 1, 1, 1, 0, 0, 0, 0, 0, ]]
         bid_value, bid_suit = player.make_bid(bid_input)
@@ -64,8 +64,8 @@ class TestPlayer(TestCase):
         player_id = 0
         hand = ['TS', 'JS', 'QS', 'KS', 'AS']
         played_cards = [
-            [('9S', 0), ('TC', 1), ('9D', 2), ('TD', 3)],
-            [('JC', 2), ('QC', 3)],
+            [(0, '9S'), (1, 'TC'), (2, '9D'), (3, 'TD')],
+            [(2, 'JC'), (3, 'QC')],
             [],
             [],
             [],
@@ -81,8 +81,12 @@ class TestPlayer(TestCase):
         play_input = PlayInput(player_id, hand, played_cards, bidding_order, all_bids, winning_bid, lead_players,
                                trick_winners, current_trick, score)
 
-        mock_return_value = [np.zeros(722)]
+        mock_return_value = [np.zeros(24)]
         mock_play_model.predict.return_value = mock_return_value
+        card_played = player.make_play(play_input)
+        self.assertEqual('TS', card_played)
+
+        play_input.winning_bid = (5, 1, 'NT')
         card_played = player.make_play(play_input)
         self.assertEqual('TS', card_played)
 

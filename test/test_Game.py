@@ -40,7 +40,7 @@ class TestGame(TestCase):
 
         # Verify that the hands have been reset (if you want to test this, you may need additional logic)
         for player in game.players:
-            assert 6 == len(player.hand)
+            self.assertEqual(6, len(game.game_state["hands"][player.player_id]))
 
         # Verify that the play_experiences_cache is empty
         assert all(item[1] is None for item in game.bid_experiences_cache)
@@ -81,7 +81,7 @@ class TestGame(TestCase):
 
         # Verify that the hands have been reset (if you want to test this, you may need additional logic)
         for player in game.players:
-            assert 6 == len(player.hand)
+            self.assertEqual(6, len(game.game_state["hands"][player.player_id]))
 
         # Dealer moves to next position
         self.assertEqual(1, game.game_state["dealer_position"])
@@ -154,7 +154,13 @@ class TestGame(TestCase):
         game = Game(bid_model, play_model)
         game.reset()
 
+        # Bid Round
         game.bid_round()
+        self.assertEqual(3, game.game_state["winning_bid"][1])  # Bid winner
+        self.assertEqual(4, game.game_state["winning_bid"][0])  # Winning bid value
+        self.assertEqual('S', game.game_state["winning_bid"][2])  # Winning bid suit
+
+        # Play Round
         game.play_round()
 
         # Each player should have:
@@ -200,7 +206,6 @@ class TestGame(TestCase):
             trajectories, _ = player.play_replay_buffer.get_next()
             print(trajectories.observation)
 
-    @unittest.skip("indefinite game")
     def test_play_game(self):
         bid_model = tf.keras.models.Sequential([
             tf.keras.layers.Input(shape=(24 + 1 + 2 + 15,), name="input"),
