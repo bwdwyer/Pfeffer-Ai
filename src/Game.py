@@ -268,11 +268,11 @@ class Game:
 
         return score_team1, score_team2
 
-    def play_game(self):
+    def play_game(self, max_rounds=64):
         """Plays a full game."""
         self.reset()
         round_iteration = 0
-        while not self.game_over() and round_iteration < 64:
+        while not self.game_over() and round_iteration < max_rounds:
             round_iteration += 1
             self.reset_round()
             self.bid_round()
